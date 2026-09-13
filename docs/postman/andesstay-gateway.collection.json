@@ -1,0 +1,353 @@
+{
+  "info": {
+    "name": "AndesStay - Gateway Pruebas (Fase 4)",
+    "description": "Coleccion de pruebas para validar AWS HTTP API Gateway de AndesStay.\n\nRequisitos previos:\n1. Configurar variables de entorno (TenantId, ClientId) en la coleccion.\n2. Obtener un Access Token valido desde Microsoft Entra ID (OAuth2 Authorization Code).\n3. El token debe incluir el scope 'access_as_user' definido en la App Registration de Azure AD.\n4. El Health Check NO requiere autenticacion.\n\nEjecutar la coleccion completa en Runner para validar 200/201, 401 y 403.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://<API_ID>.execute-api.us-east-1.amazonaws.com",
+      "type": "string"
+    },
+    {
+      "key": "validToken",
+      "value": "<PEGA_TOKEN_VALIDO_AQUI>",
+      "type": "string"
+    },
+    {
+      "key": "invalidToken",
+      "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.invalid",
+      "type": "string"
+    },
+    {
+      "key": "noScopeToken",
+      "value": "<PEGA_TOKEN_SIN_ACCESS_AS_USER_AQUI>",
+      "type": "string"
+    },
+    {
+      "key": "reservationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Health Check (Sin autenticacion)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('Body contiene status UP', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.status).to.eql('UP');",
+              "  pm.expect(json.service).to.eql('ms-andesstay-reservations');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations", "health"]
+        }
+      }
+    },
+    {
+      "name": "02 - Crear Reserva (201 Created)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "pm.test('Estado es CREADA', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.status).to.eql('CREADA');",
+              "  pm.expect(json.id).to.be.a('number');",
+              "  pm.expect(json.customerUserId).to.not.be.empty;",
+              "  pm.collectionVariables.set('reservationId', String(json.id));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{validToken}}", "type": "string" }
+          ]
+        },
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations"]
+        },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"customerUserId\":\"test-user-01\",\"unitId\":10,\"checkInDate\":\"2026-10-15\",\"checkOutDate\":\"2026-10-20\",\"amount\":120000}"
+        }
+      }
+    },
+    {
+      "name": "03 - Listar Reservas (200 OK)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('Respuesta es un array', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{validToken}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations"]
+        }
+      }
+    },
+    {
+      "name": "04 - Obtener Reserva por ID (200 OK)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('El id coincide con la reserva creada', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(String(json.id)).to.eql(pm.collectionVariables.get('reservationId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{validToken}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations/{{reservationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations", "{{reservationId}}"]
+        }
+      }
+    },
+    {
+      "name": "05 - Confirmar Reserva (200 OK)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('Estado ahora es CONFIRMADA', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.status).to.eql('CONFIRMADA');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{validToken}}", "type": "string" }
+          ]
+        },
+        "method": "PUT",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations/{{reservationId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations", "{{reservationId}}", "status"]
+        },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"status\":\"CONFIRMADA\"}"
+        }
+      }
+    },
+    {
+      "name": "06 - GET Reserva ID inexistente (404 Not Found)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{validToken}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations/999999",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations", "999999"]
+        }
+      }
+    },
+    {
+      "name": "07 - Transicion invalida (409 Conflict)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('409 Conflict - transicion invalida', function () { pm.response.to.have.status(409); });",
+              "pm.test('Mensaje de error contiene transicion', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.message).to.include('Transicion invalida');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{validToken}}", "type": "string" }
+          ]
+        },
+        "method": "PUT",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations/{{reservationId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations", "{{reservationId}}", "status"]
+        },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"status\":\"CHECKOUT\"}"
+        }
+      }
+    },
+    {
+      "name": "08 - Sin Authorization Header (401 Unauthorized)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations"]
+        }
+      }
+    },
+    {
+      "name": "09 - Token vencido/invalido (401 o 403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Error de autenticacion (401 o 403)', function () {",
+              "  var status = pm.response.code;",
+              "  pm.expect(status === 401 || status === 403).to.be.true;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{invalidToken}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations"]
+        }
+      }
+    },
+    {
+      "name": "10 - Sin scope access_as_user (403 Forbidden)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('403 Forbidden - scope insuficiente', function () { pm.response.to.have.status(403); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            { "key": "token", "value": "{{noScopeToken}}", "type": "string" }
+          ]
+        },
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/reservations",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reservations"]
+        },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"customerUserId\":\"test-user\",\"unitId\":1,\"checkInDate\":\"2026-11-01\",\"checkOutDate\":\"2026-11-05\",\"amount\":50000}"
+        }
+      }
+    }
+  ]
+}

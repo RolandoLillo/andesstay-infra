@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AWS HTTP API - Fase 4 AndesStay
+  JWT Authorizer (Azure AD / Microsoft Entra ID), CORS y rutas publicas/protegidas.
+
+Parameters:
+  TenantId:
+    Type: String
+    Default: cb0b9f53-0ba7-4f09-8da2-c2f5ab4b73ee
+    Description: Tenant ID (Entra ID) de AndesStay EP1/EP2
+  ApiClientId:
+    Type: String
+    Default: 4cd6df9a-e2f7-4024-aea6-dd67c49709bc
+    Description: >
+      Application (client) ID registrado en la app de Entra ID.
+      El audience esperado sera: api://<ApiClientId>
+  StageName:
+    Type: String
+    Default: prod
+    Description: Nombre del stage de despliegue
+  BffUrl:
+    Type: String
+    Default: "http://127.0.0.1:8080"
+    Description: >
+      URL del Backend-for-Frontend (o NLB publico) al que el API Gateway
+      reenvia las peticiones. Ejemplo produccion EC2:
+      http://<EC2_PUBLIC_IP>:8080 o un dominio NLB/ALB.
+  AllowedOriginLocal:
+    Type: String
+    Default: "http://localhost:4200"
+    Description: Origen CORS para el frontend Angular local
+  AllowedOriginPublic:
+    Type: String
+    Default: "http://localhost:4200"
+    Description: >
+      Origen CORS del frontend en produccion (ej. http://<EC2_PUBLIC_IP>
+      o el dominio del frontend). Se puede sobrescribir via CLI.
+
+Resources:
+
+  # =============================
+  # HTTP API (AWS API Gateway V2)
+  # =============================
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: andesstay-http-api
+      Description: HTTP API publico de AndesStay - autenticacion JWT centralizada via Microsoft Entra ID
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedOriginLocal
+          - !Ref AllowedOriginPublic
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowCredentials: false
+        MaxAge: 3600
+
+  # =============================
+  # JWT Authorizer (Entra ID)
+  # =============================
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      Name: andesstay-jwt-entra
+      JwtConfiguration:
+        Issuer: !Sub "https://login.microsoftonline.com/${TenantId}/v2.0"
+        Audience:
+          - !Sub "api://${ApiClientId}"
+
+  # =============================
+  # Integraciones (HTTP Proxy -> BFF en EC2)
+  # =============================
+  BffIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationUri: !Ref BffUrl
+      IntegrationMethod: ANY
+      PayloadFormatVersion: "1.0"
+      TimeoutInMillis: 30000
+
+  # =============================
+  # Rutas
+  # =============================
+
+  # --- Public Check ---
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/reservations/health
+      AuthorizationType: NONE
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  # --- Protegidas (requieren JWT + scopes) ---
+
+  GetReservationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/reservations
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  PostReservationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/reservations
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  GetReservationByIdRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/reservations/{id}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  UpdateReservationStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /api/reservations/{id}/status
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  MeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/me
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/catalog
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogCreateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/catalog
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /api/catalog
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogHealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/catalog/health
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/catalog/{proxy+}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  # Catch-all: any other route returns 404 before hitting the BFF
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: $default
+      AuthorizationType: NONE
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  # =============================
+  # Stage (auto-deploy)
+  # =============================
+  ProdStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref StageName
+      AutoDeploy: true
+
+Outputs:
+  HttpApiEndpoint:
+    Description: URL base del HTTP API
+    Value: !GetAtt HttpApi.ApiEndpoint
+  JwtAuthorizerId:
+    Description: ID del JWT Authorizer (necesario para agregar rutas futuras)
+    Value: !Ref JwtAuthorizer
