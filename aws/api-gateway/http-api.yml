@@ -6,9 +6,11 @@ Description: >
 Parameters:
   TenantId:
     Type: String
-    Description: Tenant ID (Entra ID). Ej: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    Default: cb0b9f53-0ba7-4f09-8da2-c2f5ab4b73ee
+    Description: Tenant ID (Entra ID) de AndesStay EP1/EP2
   ApiClientId:
     Type: String
+    Default: 4cd6df9a-e2f7-4024-aea6-dd67c49709bc
     Description: >
       Application (client) ID registrado en la app de Entra ID.
       El audience esperado sera: api://<ApiClientId>
@@ -23,13 +25,6 @@ Parameters:
       URL del Backend-for-Frontend (o NLB publico) al que el API Gateway
       reenvia las peticiones. Ejemplo produccion EC2:
       http://<EC2_PUBLIC_IP>:8080 o un dominio NLB/ALB.
-  CatalogUrl:
-    Type: String
-    Default: "http://127.0.0.1:8081"
-    Description: >
-      URL publica del microservicio de catalogo (o NLB). Si el catalogo no se
-      expone directamente, apuntar al BFF y enrutar la ruta /api/catalog/{proxy+}
-      por el ahi.
   AllowedOriginLocal:
     Type: String
     Default: "http://localhost:4200"
@@ -93,16 +88,6 @@ Resources:
       ApiId: !Ref HttpApi
       IntegrationType: HTTP_PROXY
       IntegrationUri: !Ref BffUrl
-      IntegrationMethod: ANY
-      PayloadFormatVersion: "1.0"
-      TimeoutInMillis: 30000
-
-  CatalogIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref HttpApi
-      IntegrationType: HTTP_PROXY
-      IntegrationUri: !Ref CatalogUrl
       IntegrationMethod: ANY
       PayloadFormatVersion: "1.0"
       TimeoutInMillis: 30000
@@ -177,6 +162,50 @@ Resources:
         - access_as_user
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
 
+  CatalogListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/catalog
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogCreateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/catalog
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /api/catalog
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  CatalogHealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/catalog/health
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
   CatalogProxyRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -186,7 +215,7 @@ Resources:
       AuthorizerId: !Ref JwtAuthorizer
       AuthorizationScopes:
         - access_as_user
-      Target: !Join ["/", ["integrations", !Ref CatalogIntegration]]
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
 
   # Catch-all: any other route returns 404 before hitting the BFF
   DefaultRoute:

@@ -105,21 +105,25 @@ services:
     ports:
       - "${BFF_PUBLIC_HOST:-127.0.0.1}:${BFF_PORT:-8080}:8080"
 
-  frontend:
-    # Aplicacion Angular en construccion. Ajustar context cuando exista.
-    build:
-      context: ../../andesstay-frontend
-      dockerfile: Dockerfile
-    image: andesstay/frontend:latest
-    container_name: andesstay-frontend
-    restart: unless-stopped
-    stdin_open: true
-    environment:
-      NGINX_HOST: 0.0.0.0
-    networks:
-      - andesstay-public
-    ports:
-      - "4200:4200"
+  # ===== Servicio DESCOMENTADO solo cuando andesstay-frontend tenga Dockerfile =====
+  # frontend:
+  #   build:
+  #     context: ../../andesstay-frontend
+  #     dockerfile: Dockerfile
+  #   image: andesstay/frontend:latest
+  #   container_name: andesstay-frontend
+  #   restart: unless-stopped
+  #   stdin_open: true
+  #   environment:
+  #     NGINX_HOST: 0.0.0.0
+  #   networks:
+  #     - andesstay-public
+  #   ports:
+  #     - "4200:4200"
+  #
+  # Por ahora, ejecutar el frontend con:
+  #   cd ../andesstay-frontend && ng serve --proxy-config proxy.conf.json
+  # apuntando al endpoint del Gateway en AWS API Gateway.
 
 networks:
   # Red interna: aisla los microservicios y la BD. Solo accesible internamente
