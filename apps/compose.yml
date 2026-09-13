@@ -4,7 +4,7 @@ name: andesstay
 # Repositorios locales esperados en ../.. (hermanos de andesstay-infra):
 #   - andesstay-ms-reservations/reservations  (Spring Boot, puerto 8082)
 #   - andesstay-ms-catalog (en construccion, puerto 8081)
-#   - andesstay-bff (en construccion, puerto 8080)
+#   - andesstay-ms-bff (en construccion, puerto 8080)
 #   - andesstay-frontend (en construccion, Angular, puerto 4200)
 #
 # Copiar .env.example a .env y ajustar credenciales antes de ejecutar:
@@ -84,7 +84,7 @@ services:
   ms-bff:
     # Backend-for-Frontend en construccion. Ajustar context cuando exista.
     build:
-      context: ../../andesstay-bff
+      context: ../../andesstay-ms-bff
       dockerfile: Dockerfile
     image: andesstay/ms-bff:latest
     container_name: andesstay-ms-bff

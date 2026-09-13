@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "AndesStay - Gateway Pruebas (Fase 4)",
-    "description": "Coleccion de pruebas para validar AWS HTTP API Gateway de AndesStay.\n\nRequisitos previos:\n1. Configurar variables de entorno (TenantId, ClientId) en la coleccion.\n2. Obtener un Access Token valido desde Microsoft Entra ID (OAuth2 Authorization Code).\n3. El token debe incluir los scopes 'reservations:read' y/o 'reservations:write' segun la app registration.\n4. El Health Check NO requiere autenticacion.\n\nEjecutar la coleccion completa en Runner para validar 200/201, 401 y 403.",
+    "description": "Coleccion de pruebas para validar AWS HTTP API Gateway de AndesStay.\n\nRequisitos previos:\n1. Configurar variables de entorno (TenantId, ClientId) en la coleccion.\n2. Obtener un Access Token valido desde Microsoft Entra ID (OAuth2 Authorization Code).\n3. El token debe incluir el scope 'access_as_user' definido en la App Registration de Azure AD.\n4. El Health Check NO requiere autenticacion.\n\nEjecutar la coleccion completa en Runner para validar 200/201, 401 y 403.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -22,7 +22,7 @@
     },
     {
       "key": "noScopeToken",
-      "value": "<PEGA_TOKEN_SIN_SCOPES_RESERVATIONS_AQUI>",
+      "value": "<PEGA_TOKEN_SIN_ACCESS_AS_USER_AQUI>",
       "type": "string"
     },
     {
@@ -316,7 +316,7 @@
       }
     },
     {
-      "name": "10 - Sin scope reservations:write (403 Forbidden)",
+      "name": "10 - Sin scope access_as_user (403 Forbidden)",
       "event": [
         {
           "listen": "test",

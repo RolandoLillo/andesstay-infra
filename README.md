@@ -88,10 +88,10 @@ La plantilla `aws/api-gateway/http-api.yml` crea el HTTP API con:
 |----------------|--------------------------------------------------------------------|
 | Protocolo      | HTTP (V2)                                                          |
 | Publica        | `GET /api/reservations/health`                                     |
-| Protegidas     | `GET` / `POST` `/api/reservations`, `GET /{id}`, `PUT /{id}/status`|
+| Protegidas     | `GET`/`POST` `/api/reservations`, `GET/{id}`, `PUT/{id}/status`, `GET /api/me`, `GET /api/catalog/{proxy+}` |
 | Authorizer     | JWT — Issuer `https://login.microsoftonline.com/<TENANT_ID>/v2.0`  |
 | Audience       | `api://<API_CLIENT_ID>`                                            |
-| Scopes         | `reservations:read` (GET), `reservations:write` (POST/PUT)         |
+| Scopes         | `access_as_user` (todas las rutas protegidas, definido en la App Registration) |
 | CORS           | Origins `http://localhost:4200` y `http://<EC2_PUBLIC_IP>`         |
 | Metodos        | `GET, POST, PUT, DELETE, OPTIONS`                                  |
 | Headers        | `Authorization, Content-Type`                                      |
