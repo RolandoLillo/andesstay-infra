@@ -1,0 +1,9 @@
+# Secrets / configuracion local
+.env
+*.local
+
+# Logs y temporales
+*.log
+.DS_Store
+.idea/
+.vscode/

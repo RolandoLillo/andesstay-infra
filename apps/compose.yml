@@ -1,0 +1,134 @@
+name: andesstay
+
+# Estructura Fase 4 - AndesStay
+# Repositorios locales esperados en ../.. (hermanos de andesstay-infra):
+#   - andesstay-ms-reservations/reservations  (Spring Boot, puerto 8082)
+#   - andesstay-ms-catalog (en construccion, puerto 8081)
+#   - andesstay-bff (en construccion, puerto 8080)
+#   - andesstay-frontend (en construccion, Angular, puerto 4200)
+#
+# Copiar .env.example a .env y ajustar credenciales antes de ejecutar:
+#   docker compose up -d --build
+
+services:
+
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: andesstay-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: andesstay_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d andesstay_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - andesstay-net
+    # Puertos expuestos al host SOLO para herramientas de administracion (opcional):
+    # ports:
+    #   - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  ms-reservations:
+    build:
+      context: ../../andesstay-ms-reservations/reservations
+      dockerfile: Dockerfile
+    image: andesstay/ms-reservations:latest
+    container_name: andesstay-ms-reservations
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8082
+      DB_URL: jdbc:postgresql://postgres-db:5432/andesstay_db
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/api/reservations/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - andesstay-net
+    # Solo accesible desde la red interna (Gateway/BFF).
+    # Para pruebas locales desde el host, descomentar:
+    # ports:
+    #   - "127.0.0.1:${RESERVATIONS_PORT:-8082}:8082"
+
+  ms-catalog:
+    # Repositorio de catalogo en construccion. Ajustar context cuando exista.
+    build:
+      context: ../../andesstay-ms-catalog
+      dockerfile: Dockerfile
+    image: andesstay/ms-catalog:latest
+    container_name: andesstay-ms-catalog
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://postgres-db:5432/andesstay_db
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - andesstay-net
+
+  ms-bff:
+    # Backend-for-Frontend en construccion. Ajustar context cuando exista.
+    build:
+      context: ../../andesstay-bff
+      dockerfile: Dockerfile
+    image: andesstay/ms-bff:latest
+    container_name: andesstay-ms-bff
+    restart: unless-stopped
+    environment:
+      MS_RESERVATIONS_URL: http://ms-reservations:8082
+      MS_CATALOG_URL: http://ms-catalog:8081
+    depends_on:
+      ms-reservations:
+        condition: service_started
+      ms-catalog:
+        condition: service_started
+    networks:
+      - andesstay-net
+      - andesstay-public
+    # Unico punto de entrada accesible para el Gateway / host.
+    # En produccion EC2 usar BFF_PUBLIC_HOST=0.0.0.0 para que el API Gateway pueda llegar.
+    ports:
+      - "${BFF_PUBLIC_HOST:-127.0.0.1}:${BFF_PORT:-8080}:8080"
+
+  frontend:
+    # Aplicacion Angular en construccion. Ajustar context cuando exista.
+    build:
+      context: ../../andesstay-frontend
+      dockerfile: Dockerfile
+    image: andesstay/frontend:latest
+    container_name: andesstay-frontend
+    restart: unless-stopped
+    stdin_open: true
+    environment:
+      NGINX_HOST: 0.0.0.0
+    networks:
+      - andesstay-public
+    ports:
+      - "4200:4200"
+
+networks:
+  # Red interna: aisla los microservicios y la BD. Solo accesible internamente
+  # (Gateway/BFF). Sin salida a Internet.
+  andesstay-net:
+    internal: true
+  # Red publica para expuestos al host/browser (frontend y puerto del BFF).
+  andesstay-public:
+    driver: bridge
+
+volumes:
+  postgres_data:
