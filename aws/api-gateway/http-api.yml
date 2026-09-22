@@ -20,7 +20,7 @@ Parameters:
     Description: Nombre del stage de despliegue
   BffUrl:
     Type: String
-    Default: "http://3.87.83.6:8080"
+    Default: "http://3.87.83.6:8080/{proxy}"
     Description: >
       URL del Backend-for-Frontend (o NLB publico) al que el API Gateway
       reenvia las peticiones. Ejemplo produccion EC2:
@@ -102,6 +102,15 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /api/reservations/health
+      AuthorizationType: NONE
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  # --- Preflight CORS (pública, sin JWT) ---
+  OptionsProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: OPTIONS /{proxy+}
       AuthorizationType: NONE
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
 
