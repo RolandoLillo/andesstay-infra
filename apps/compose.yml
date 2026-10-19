@@ -1,14 +1,4 @@
-name: andesstay
-
-# Estructura Fase 4 - AndesStay
-# Repositorios locales esperados en ../.. (hermanos de andesstay-infra):
-#   - andesstay-ms-reservations/reservations  (Spring Boot, puerto 8082)
-#   - andesstay-ms-catalog (en construccion, puerto 8081)
-#   - andesstay-ms-bff (en construccion, puerto 8080)
-#   - andesstay-frontend (en construccion, Angular, puerto 4200)
-#
-# Copiar .env.example a .env y ajustar credenciales antes de ejecutar:
-#   docker compose up -d --build
+﻿name: andesstay
 
 services:
 
@@ -28,10 +18,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - andesstay-net
-    # Puertos expuestos al host SOLO para herramientas de administracion (opcional):
-    # ports:
-    #   - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - backend-net
 
   ms-reservations:
     build:
@@ -56,14 +43,9 @@ services:
       retries: 5
       start_period: 30s
     networks:
-      - andesstay-net
-    # Solo accesible desde la red interna (Gateway/BFF).
-    # Para pruebas locales desde el host, descomentar:
-    # ports:
-    #   - "127.0.0.1:${RESERVATIONS_PORT:-8082}:8082"
+      - backend-net
 
   ms-catalog:
-    # Repositorio de catalogo en construccion. Ajustar context cuando exista.
     build:
       context: ../../andesstay-ms-catalog
       dockerfile: Dockerfile
@@ -79,10 +61,9 @@ services:
       postgres-db:
         condition: service_healthy
     networks:
-      - andesstay-net
+      - backend-net
 
   ms-bff:
-    # Backend-for-Frontend en construccion. Ajustar context cuando exista.
     build:
       context: ../../andesstay-ms-bff
       dockerfile: Dockerfile
@@ -94,44 +75,20 @@ services:
       MS_CATALOG_URL: http://ms-catalog:8081
     depends_on:
       ms-reservations:
-        condition: service_started
+        condition: service_healthy
       ms-catalog:
         condition: service_started
     networks:
-      - andesstay-net
-      - andesstay-public
-    # Unico punto de entrada accesible para el Gateway / host.
-    # En produccion EC2 usar BFF_PUBLIC_HOST=0.0.0.0 para que el API Gateway pueda llegar.
+      - backend-net
+      - gateway-net
     ports:
       - "${BFF_PUBLIC_HOST:-127.0.0.1}:${BFF_PORT:-8080}:8080"
 
-  # ===== Servicio DESCOMENTADO solo cuando andesstay-frontend tenga Dockerfile =====
-  # frontend:
-  #   build:
-  #     context: ../../andesstay-frontend
-  #     dockerfile: Dockerfile
-  #   image: andesstay/frontend:latest
-  #   container_name: andesstay-frontend
-  #   restart: unless-stopped
-  #   stdin_open: true
-  #   environment:
-  #     NGINX_HOST: 0.0.0.0
-  #   networks:
-  #     - andesstay-public
-  #   ports:
-  #     - "4200:4200"
-  #
-  # Por ahora, ejecutar el frontend con:
-  #   cd ../andesstay-frontend && ng serve --proxy-config proxy.conf.json
-  # apuntando al endpoint del Gateway en AWS API Gateway.
-
 networks:
-  # Red interna: aisla los microservicios y la BD. Solo accesible internamente
-  # (Gateway/BFF). Sin salida a Internet.
-  andesstay-net:
+  backend-net:
+    driver: bridge
     internal: true
-  # Red publica para expuestos al host/browser (frontend y puerto del BFF).
-  andesstay-public:
+  gateway-net:
     driver: bridge
 
 volumes:
