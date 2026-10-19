@@ -63,6 +63,29 @@ services:
     networks:
       - backend-net
 
+  ms-audit:
+    build:
+      context: ../../andesstay-ms-audit
+      dockerfile: Dockerfile
+    image: andesstay/ms-audit:latest
+    container_name: andesstay-ms-audit
+    restart: unless-stopped
+    environment:
+      DB_URL: jdbc:postgresql://postgres-db:5432/andesstay_db
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8084/api/audit/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend-net
+
   ms-bff:
     build:
       context: ../../andesstay-ms-bff
