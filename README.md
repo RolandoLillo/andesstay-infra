@@ -18,24 +18,27 @@ El ecosistema sigue un patrón **Gateway ──► BFF ──► Microservicios*
              │         AWS API Gateway (HTTP API)       │
              │      (JWT Authorizer — Entra ID)         │
              └────────────────────┬─────────────────────┘
-                                  │ Red Interna / Proxy
+                                  │ gateway-net :8080
                                   ▼
-        ┌──────────────────────────────────────────┐
-        │        BFF (andesstay-ms-bff:8080)       │
-        │  (RBAC: Admin, Operador, Cliente, ...)   │
-        └──────────┬───────────────────┬───────────┘
-                   │                   │
-      ┌────────────┘                   └────────────┐
-      ▼                                            ▼
-┌────────────────────┐                   ┌──────────────────────┐
-│  ms-catalog:8081   │                   │ ms-reservations:8082 │
-└────────────────────┘                   └───────────┬──────────┘
-                                                     │
-                                                     ▼
-                                     ┌────────────────────────────┐
-                                     │ postgres-db (5432)         │
-                                     │ (interno — andesstay-net)  │
-                                     └────────────────────────────┘
+        ┌───────────────────────────────────────────────┐
+        │        BFF (ms-bff:8080)                      │
+        │   (RBAC: Admin, Operador, Cliente, Auditor)   │
+        └───┬──────────┬──────────┬──────────┬──────────┘
+            │          │          │          │
+            ▼          ▼          ▼          ▼
+     ┌────────────┐┌────────────┐┌────────────┐┌────────────┐
+     │ ms-catalog ││ms-reserv.  ││ ms-audit   ││ ms-notify  │
+     │   :8081    ││   :8082    ││   :8084    ││   :8083    │
+     └─────┬──────┘└─────┬──────┘└─────┬──────┘└─────┬──────┘
+           │             │             │             │
+           ▼             ▼             ▼             ▼
+   ╔══════════════════════════════════════════════════════════╗
+   ║  backend-net (interna, sin salida a Internet)            ║
+   ║                                                          ║
+   ║  postgres-db:5432      zookeeper:2181                    ║
+   ║  kafka:29092 (interno) / localhost:9092 (desde el host)  ║
+   ║  rabbitmq:5672 (AMQP)  rabbitmq:15672 (management UI)    ║
+   ╚══════════════════════════════════════════════════════════╝
 ```
 
 ### Principios de Seguridad y Ruteo
@@ -46,8 +49,8 @@ El ecosistema sigue un patrón **Gateway ──► BFF ──► Microservicios*
 
 ### Redes Docker
 
-* `andesstay-net` (**interna**): aísla `postgres-db`, `ms-reservations` y `ms-catalog`. Sin salida a Internet; solo accesible desde el Gateway/BFF.
-* `andesstay-public`: red para los componentes expuestos externamente — `ms-bff` (puerto `8080`) y, en el futuro, `frontend`. El **API Gateway** en EC2 alcanza al BFF a través de esta red.
+* `backend-net` (**interna**, `internal: true`): red de datos y de servicio. Aísla `postgres-db`, `zookeeper`, `kafka`, `rabbitmq` y los microservicios `ms-reservations`, `ms-catalog`, `ms-audit` y `ms-notify`. **No tiene salida a Internet** y no es alcanzable desde el host, salvo por los puertos publicados explícitamente (`kafka:9092`, `rabbitmq:5672/15672`).
+* `gateway-net` (**pública**): red de borde. Solo `ms-bff` se conecta a ella y publica el `8080`; es el único punto de entrada para el **API Gateway** (en EC2) hacia el backend.
 
 ---
 
@@ -85,19 +88,46 @@ La autenticación se realiza mediante **OAuth 2.0 / OIDC** integrado con Microso
 
 ## 🐳 Orquestación con Docker Compose
 
-El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia y los microservicios en la red interna `andesstay-net`.
+El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia y los microservicios en las redes `backend-net` (interna) y `gateway-net` (pública).
 
 ### Servicios Incluidos
 
 | Servicio         | Puerto host | Red                                  | Notas                                      |
 |------------------|-------------|--------------------------------------|--------------------------------------------|
-| `postgres-db`    | interno     | `andesstay-net`                      | PostgreSQL 16, **no expuesto al host en producción** |
-| `ms-reservations`| interno (opcional `8082` para testing) | `andesstay-net` | Spring Boot, perfil `prod`, conecta a `postgres-db` |
-| `ms-catalog`     | interno | `andesstay-net`                      | Microservicio de catálogo (puerto `8081`)  |
-| `ms-bff`         | `8080`      | `andesstay-net` + `andesstay-public` | Único punto de entrada para el Gateway     |
-| ~~`frontend`~~   | `4200`      | `andesstay-public`                   | **Comentado** — se ejecuta con `ng serve`  |
+| `postgres-db`    | interno     | `backend-net`                        | PostgreSQL 16, **no expuesto al host**    |
+| `ms-reservations`| interno     | `backend-net`                        | Spring Boot, perfil `prod`, conecta a `postgres-db` y `kafka:29092`, depende de Kafka (service_healthy) |
+| `ms-catalog`     | interno     | `backend-net`                        | Microservicio de catálogo (puerto `8081`)  |
+| `ms-audit`       | interno     | `backend-net`                        | Microservicio de auditoría (puerto `8084`) |
+| `ms-notify`      | interno     | `backend-net`                        | Microservicio de notificaciones (puerto `8083`), consume/produce en RabbitMQ |
+| `zookeeper`      | interno     | `backend-net`                        | Coordina el clúster Kafka (puerto `2181`)  |
+| `kafka`          | `9092`      | `backend-net`                        | Broker Kafka dual: `kafka:29092` (interno) / `localhost:9092` (host) |
+| `rabbitmq`       | `5672`, `15672` | `backend-net`                    | AMQP `5672` + management UI `15672`        |
+| `ms-bff`         | `8080`      | `backend-net` + `gateway-net`        | Único punto de entrada para el Gateway    |
+| ~~`frontend`~~   | `4200`      | `gateway-net`                        | **Comentado** — se ejecuta con `ng serve`  |
 
-> `postgres-db` es un servicio **interno**: sus credenciales y datos circulan solo dentro de `andesstay-net`. En producción no se publica su puerto al host; las herramientas de administración pueden habilitarlo localmente de forma opcional.
+> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`) viven en `backend-net` (red interna). Solo `ms-bff` participa además en `gateway-net` y expone un puerto al host para recibir tráfico del API Gateway.
+
+### Topología de Red y Acceso a Kafka
+
+Kafka se configura con **dos listeners** para separar el tráfico de la red interna del acceso desde el host local:
+
+| Listener | Escucha | Anunciado (`advertised`) | Uso |
+|---|---|---|---|
+| `PLAINTEXT` | `0.0.0.0:29092` | `kafka:29092` | **Entre contenedores** (`backend-net`) |
+| `PLAINTEXT_HOST` | `0.0.0.0:9092` | `localhost:9092` | **Desde el host** (dev local, herramientas) |
+
+* **Desde dentro de Docker** (microservicios): `kafka:29092`. Así lo usan `ms-bff` y `ms-reservations` vía `KAFKA_BOOTSTRAP_SERVERS` (y `ms-reservations` espera a que Kafka esté `service_healthy` para iniciar).
+* **Desde el host local** (KafkaTool, consolas, scripts): `localhost:9092`, mapeado por la regla `ports: "9092:9092"`.
+
+```bash
+# Desde un contenedor de backend-net
+bootstrap=kafka:29092
+
+# Desde el host local
+bootstrap=localhost:9092
+```
+
+> ⚠️ Usar `kafka:9092` desde dentro de la red **no funciona**: el broker anuncia `localhost:9092` en ese listener y el cliente terminaría conectándose a su propio `localhost`.
 
 ### Ejecución Local
 
@@ -106,6 +136,7 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
    - `andesstay-ms-bff`
    - `andesstay-ms-catalog`
    - `andesstay-ms-reservations`
+   - `andesstay-ms-notify`
    - `andesstay-frontend`
 
 2. **Configurar credenciales de entorno:**
@@ -125,12 +156,18 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
    docker compose ps
    ```
 
-5. **Ejecutar el Frontend Angular** (mientras esté comentado en compose):
-   ```bash
-   cd ../../andesstay-frontend
-   npm install
-   ng serve --proxy-config proxy.conf.json
-   ```
+5. **Iniciar Zookeeper/Kafka (validación):**
+    ```bash
+    docker compose logs -f zookeeper kafka
+    # Esperar a que Kafka reporte estado healthy
+    ```
+
+6. **Ejecutar el Frontend Angular** (mientras esté comentado en compose):
+    ```bash
+    cd ../../andesstay-frontend
+    npm install
+    ng serve --proxy-config proxy.conf.json
+    ```
 
 ### Variables de Entorno (`.env`)
 
@@ -141,6 +178,8 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
 | `POSTGRES_USER`     | Usuario de PostgreSQL                                   | *(obligatorio)*         |
 | `POSTGRES_PASSWORD` | Contraseña de PostgreSQL                                | *(obligatorio)*         |
 | `POSTGRES_DB`       | Nombre de la base de datos creada por PostgreSQL        | `andesstay_db`          |
+| `RABBITMQ_USERNAME` | Usuario del broker RabbitMQ (broker + `ms-notify` + UI management) | *(obligatorio)* |
+| `RABBITMQ_PASSWORD` | Contraseña del broker RabbitMQ                          | *(obligatorio)*         |
 | `BFF_PUBLIC_HOST`   | Interfaz de escucha del BFF: `127.0.0.1` (local) / `0.0.0.0` (EC2) | `127.0.0.1`   |
 | `BFF_PORT`          | Puerto del BFF publicado al host                        | `8080`                  |
 
