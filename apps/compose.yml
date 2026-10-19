@@ -34,10 +34,17 @@ services:
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_RABBITMQ_ADDRESSES: rabbitmq-1:5672,rabbitmq-2:5672
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     depends_on:
       postgres-db:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      rabbitmq-1:
+        condition: service_healthy
+      rabbitmq-2:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/api/reservations/health"]
@@ -98,8 +105,7 @@ services:
     restart: unless-stopped
     environment:
       SERVER_PORT: 8083
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_ADDRESSES: rabbitmq-1:5672,rabbitmq-2:5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
     healthcheck:
@@ -109,7 +115,9 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
-      rabbitmq:
+      rabbitmq-1:
+        condition: service_healthy
+      rabbitmq-2:
         condition: service_healthy
     networks:
       - backend-net
@@ -164,24 +172,70 @@ services:
     networks:
       - backend-net
 
-  rabbitmq:
+  rabbitmq-1:
     image: rabbitmq:3.12-management
-    container_name: andesstay-rabbitmq
+    container_name: andesstay-rabbitmq-1
+    hostname: rabbitmq-1
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
     ports:
       - "5672:5672"
       - "15672:15672"
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq1_data:/var/lib/rabbitmq
+    networks:
+      - backend-net
+      - gateway-net
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  rabbitmq-2:
+    image: rabbitmq:3.12-management
+    container_name: andesstay-rabbitmq-2
+    hostname: rabbitmq-2
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
+    volumes:
+      - rabbitmq2_data:/var/lib/rabbitmq
+    depends_on:
+      rabbitmq-1:
+        condition: service_healthy
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        /usr/local/bin/docker-entrypoint.sh rabbitmq-server &
+        RABBIT_PID=$$!
+        gosu rabbitmq bash -c '
+          until rabbitmq-diagnostics -q ping >/dev/null 2>&1; do sleep 3; done
+          if rabbitmqctl cluster_status 2>/dev/null | grep -q "rabbit@rabbitmq-1"; then
+            echo "[cluster] rabbitmq-2 ya forma parte del cluster."
+          else
+            rabbitmqctl stop_app
+            rabbitmqctl reset
+            rabbitmqctl join_cluster rabbit@rabbitmq-1
+            rabbitmqctl start_app
+            echo "[cluster] rabbitmq-2 unido a rabbit@rabbitmq-1."
+          fi
+        '
+        wait "$$RABBIT_PID"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     networks:
       - backend-net
 
@@ -230,4 +284,5 @@ volumes:
   zookeeper_data:
   zookeeper_log:
   kafka_data:
-  rabbitmq_data:
+  rabbitmq1_data:
+  rabbitmq2_data:
