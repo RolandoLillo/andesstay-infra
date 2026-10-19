@@ -37,7 +37,8 @@ El ecosistema sigue un patrón **Gateway ──► BFF ──► Microservicios*
    ║                                                          ║
    ║  postgres-db:5432      zookeeper:2181                    ║
    ║  kafka:29092 (interno) / localhost:9092 (desde el host)  ║
-   ║  rabbitmq:5672 (AMQP)  rabbitmq:15672 (management UI)    ║
+   ║  rabbitmq-1 + rabbitmq-2 (clúster AMQP)                  ║
+   ║  5672 (AMQP) / 15672 (management UI) desde el host        ║
    ╚══════════════════════════════════════════════════════════╝
 ```
 
@@ -49,8 +50,10 @@ El ecosistema sigue un patrón **Gateway ──► BFF ──► Microservicios*
 
 ### Redes Docker
 
-* `backend-net` (**interna**, `internal: true`): red de datos y de servicio. Aísla `postgres-db`, `zookeeper`, `kafka`, `rabbitmq` y los microservicios `ms-reservations`, `ms-catalog`, `ms-audit` y `ms-notify`. **No tiene salida a Internet** y no es alcanzable desde el host, salvo por los puertos publicados explícitamente (`kafka:9092`, `rabbitmq:5672/15672`).
-* `gateway-net` (**pública**): red de borde. Solo `ms-bff` se conecta a ella y publica el `8080`; es el único punto de entrada para el **API Gateway** (en EC2) hacia el backend.
+* `backend-net` (**interna**, `internal: true`): red de datos y de servicio. Aísla `postgres-db`, `zookeeper`, `kafka`, `rabbitmq-1`, `rabbitmq-2` y los microservicios `ms-reservations`, `ms-catalog`, `ms-audit` y `ms-notify`. **No tiene salida a Internet** y no es alcanzable desde el host, salvo por los puertos publicados explícitamente (`kafka:9092`, `rabbitmq-1:5672/15672`).
+* `gateway-net` (**pública**): red de borde. `ms-bff` publica el `8080` y `rabbitmq-1` publica `5672`/`15672`; es el único punto de entrada para el **API Gateway** (en EC2) y para la Management UI de RabbitMQ.
+
+> Nota: Docker solo publica puertos de contenedores que participan en al menos una red **no interna**. Por eso `rabbitmq-1` (el nodo que expone la UI) se conecta además a `gateway-net`; `rabbitmq-2` permanece solo en `backend-net`.
 
 ---
 
@@ -98,14 +101,15 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
 | `ms-reservations`| interno     | `backend-net`                        | Spring Boot, perfil `prod`, conecta a `postgres-db` y `kafka:29092`, depende de Kafka (service_healthy) |
 | `ms-catalog`     | interno     | `backend-net`                        | Microservicio de catálogo (puerto `8081`)  |
 | `ms-audit`       | interno     | `backend-net`                        | Microservicio de auditoría (puerto `8084`) |
-| `ms-notify`      | interno     | `backend-net`                        | Microservicio de notificaciones (puerto `8083`), consume/produce en RabbitMQ |
+| `ms-notify`      | interno     | `backend-net`                        | Microservicio de notificaciones (puerto `8083`), consume/produce en el clúster RabbitMQ (`backend-net`), depende de `rabbitmq-1`/`rabbitmq-2` (service_healthy) |
 | `zookeeper`      | interno     | `backend-net`                        | Coordina el clúster Kafka (puerto `2181`)  |
 | `kafka`          | `9092`      | `backend-net`                        | Broker Kafka dual: `kafka:29092` (interno) / `localhost:9092` (host) |
-| `rabbitmq`       | `5672`, `15672` | `backend-net`                    | AMQP `5672` + management UI `15672`        |
+| `rabbitmq-1`     | `5672`, `15672` | `backend-net` + `gateway-net`    | Nodo **seed** del clúster RabbitMQ (`rabbit@rabbitmq-1`); expone AMQP `5672` + management UI `15672` |
+| `rabbitmq-2`     | interno     | `backend-net`                        | Segundo nodo del clúster (`rabbit@rabbitmq-2`); se une a `rabbit@rabbitmq-1` al arrancar |
 | `ms-bff`         | `8080`      | `backend-net` + `gateway-net`        | Único punto de entrada para el Gateway    |
 | ~~`frontend`~~   | `4200`      | `gateway-net`                        | **Comentado** — se ejecuta con `ng serve`  |
 
-> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`) viven en `backend-net` (red interna). Solo `ms-bff` participa además en `gateway-net` y expone un puerto al host para recibir tráfico del API Gateway.
+> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq-1`, `rabbitmq-2`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`) viven en `backend-net` (red interna). `ms-bff` y `rabbitmq-1` participan además en `gateway-net` y exponen puertos al host.
 
 ### Topología de Red y Acceso a Kafka
 
@@ -128,6 +132,29 @@ bootstrap=localhost:9092
 ```
 
 > ⚠️ Usar `kafka:9092` desde dentro de la red **no funciona**: el broker anuncia `localhost:9092` en ese listener y el cliente terminaría conectándose a su propio `localhost`.
+
+### Clúster de RabbitMQ (2 nodos)
+
+RabbitMQ se despliega como un **clúster de dos nodos** para dar alta disponibilidad al bus de eventos de `ms-notify`:
+
+| Nodo | Nombre Erlang | Rol | Red(es) |
+|---|---|---|---|
+| `rabbitmq-1` | `rabbit@rabbitmq-1` | Nodo *seed* (arranca primero) | `backend-net` + `gateway-net` (publica `5672`/`15672`) |
+| `rabbitmq-2` | `rabbit@rabbitmq-2` | Se une al clúster al iniciar | `backend-net` |
+
+* Ambos nodos comparten la **cookie Erlang** (`RABBITMQ_ERLANG_COOKIE`) y son **nodos de disco** (`disc`), persistiendo metadatos en volúmenes dedicados (`rabbitmq1_data`, `rabbitmq2_data`).
+* `rabbitmq-2` espera (`depends_on: service_healthy`) a `rabbitmq-1` y ejecuta en su `entrypoint`: `stop_app` → `reset` → `join_cluster rabbit@rabbitmq-1` → `start_app`. Es idempotente: si ya pertenece al clúster, solo arranca.
+* Los microservicios se conectan al clúster con `SPRING_RABBITMQ_ADDRESSES=rabbitmq-1:5672,rabbitmq-2:5672` (failover automático entre nodos).
+
+```bash
+# Verificar el estado del clúster (debe listar los 2 nodos como "Running")
+docker exec andesstay-rabbitmq-1 rabbitmqctl cluster_status
+
+# Management UI: http://localhost:15672  (usuario/contraseña de RABBITMQ_USERNAME/PASSWORD)
+#   Overview -> Nodes: rabbit@rabbitmq-1 y rabbit@rabbitmq-2
+#   Exchanges: cmd.direct, cmd.topic, cmd.dead.dlx
+#   Queues:    q.cmd.email, q.cmd.housekeeping, q.cmd.voucher (+ sus *.dlq)
+```
 
 ### Ejecución Local
 
@@ -178,8 +205,9 @@ bootstrap=localhost:9092
 | `POSTGRES_USER`     | Usuario de PostgreSQL                                   | *(obligatorio)*         |
 | `POSTGRES_PASSWORD` | Contraseña de PostgreSQL                                | *(obligatorio)*         |
 | `POSTGRES_DB`       | Nombre de la base de datos creada por PostgreSQL        | `andesstay_db`          |
-| `RABBITMQ_USERNAME` | Usuario del broker RabbitMQ (broker + `ms-notify` + UI management) | *(obligatorio)* |
-| `RABBITMQ_PASSWORD` | Contraseña del broker RabbitMQ                          | *(obligatorio)*         |
+| `RABBITMQ_USERNAME` | Usuario del clúster RabbitMQ (nodos `rabbitmq-1/2` + `ms-notify`/`ms-reservations` + UI management) | *(obligatorio)* |
+| `RABBITMQ_PASSWORD` | Contraseña del clúster RabbitMQ                        | *(obligatorio)*         |
+| `RABBITMQ_ERLANG_COOKIE` | Cookie Erlang compartida por los nodos del clúster (debe ser idéntica en `rabbitmq-1` y `rabbitmq-2`) | *(obligatorio)* |
 | `BFF_PUBLIC_HOST`   | Interfaz de escucha del BFF: `127.0.0.1` (local) / `0.0.0.0` (EC2) | `127.0.0.1`   |
 | `BFF_PORT`          | Puerto del BFF publicado al host                        | `8080`                  |
 
