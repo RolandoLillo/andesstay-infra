@@ -95,7 +95,7 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
 | Servicio         | Puerto host | Red                                  | Notas                                      |
 |------------------|-------------|--------------------------------------|--------------------------------------------|
 | `postgres-db`    | interno     | `backend-net`                        | PostgreSQL 16, **no expuesto al host**    |
-| `ms-reservations`| interno     | `backend-net`                        | Spring Boot, perfil `prod`, conecta a `postgres-db` y `kafka:29092` |
+| `ms-reservations`| interno     | `backend-net`                        | Spring Boot, perfil `prod`, conecta a `postgres-db` y `kafka:29092`, depende de Kafka (service_healthy) |
 | `ms-catalog`     | interno     | `backend-net`                        | Microservicio de catálogo (puerto `8081`)  |
 | `ms-audit`       | interno     | `backend-net`                        | Microservicio de auditoría (puerto `8084`) |
 | `ms-notify`      | interno     | `backend-net`                        | Microservicio de notificaciones (puerto `8083`), consume/produce en RabbitMQ |
@@ -116,7 +116,7 @@ Kafka se configura con **dos listeners** para separar el tráfico de la red inte
 | `PLAINTEXT` | `0.0.0.0:29092` | `kafka:29092` | **Entre contenedores** (`backend-net`) |
 | `PLAINTEXT_HOST` | `0.0.0.0:9092` | `localhost:9092` | **Desde el host** (dev local, herramientas) |
 
-* **Desde dentro de Docker** (microservicios): `kafka:29092`. Así lo usan `ms-bff` y `ms-reservations` vía `KAFKA_BOOTSTRAP_SERVERS`.
+* **Desde dentro de Docker** (microservicios): `kafka:29092`. Así lo usan `ms-bff` y `ms-reservations` vía `KAFKA_BOOTSTRAP_SERVERS` (y `ms-reservations` espera a que Kafka esté `service_healthy` para iniciar).
 * **Desde el host local** (KafkaTool, consolas, scripts): `localhost:9092`, mapeado por la regla `ports: "9092:9092"`.
 
 ```bash
