@@ -175,8 +175,9 @@ docker exec andesstay-rabbitmq-1 rabbitmqctl cluster_status
 3. **Levantar la infraestructura:**
    ```bash
    cd apps
-   docker compose up --build -d
+   docker compose up --build -d --remove-orphans
    ```
+   > `--remove-orphans` es necesario al actualizar desde la versión de broker único: elimina el contenedor `rabbitmq` anterior (que retiene los puertos `5672`/`15672` y bloquea a `rabbitmq-1`).
 
 4. **Verificar estado de los contenedores:**
    ```bash
