@@ -82,7 +82,7 @@ services:
       - backend-net
       - gateway-net
     ports:
-      - ${BFF_PUBLIC_HOST:-127.0.0.1}::8080
+      - "${BFF_PUBLIC_HOST:-127.0.0.1}:${BFF_PORT:-8080}:8080"
 
 networks:
   backend-net:
