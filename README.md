@@ -85,19 +85,22 @@ La autenticación se realiza mediante **OAuth 2.0 / OIDC** integrado con Microso
 
 ## 🐳 Orquestación con Docker Compose
 
-El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia y los microservicios en la red interna `andesstay-net`.
+El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia y los microservicios en las redes `backend-net` (interna) y `gateway-net` (pública).
 
 ### Servicios Incluidos
 
 | Servicio         | Puerto host | Red                                  | Notas                                      |
 |------------------|-------------|--------------------------------------|--------------------------------------------|
-| `postgres-db`    | interno     | `andesstay-net`                      | PostgreSQL 16, **no expuesto al host en producción** |
-| `ms-reservations`| interno (opcional `8082` para testing) | `andesstay-net` | Spring Boot, perfil `prod`, conecta a `postgres-db` |
-| `ms-catalog`     | interno | `andesstay-net`                      | Microservicio de catálogo (puerto `8081`)  |
-| `ms-bff`         | `8080`      | `andesstay-net` + `andesstay-public` | Único punto de entrada para el Gateway     |
-| ~~`frontend`~~   | `4200`      | `andesstay-public`                   | **Comentado** — se ejecuta con `ng serve`  |
+| `postgres-db`    | interno     | `backend-net`                        | PostgreSQL 16, **no expuesto al host**    |
+| `ms-reservations`| interno     | `backend-net`                        | Spring Boot, perfil `prod`, conecta a `postgres-db` |
+| `ms-catalog`     | interno     | `backend-net`                        | Microservicio de catálogo (puerto `8081`)  |
+| `ms-audit`       | interno     | `backend-net`                        | Microservicio de auditoría (puerto `8084`) |
+| `zookeeper`      | interno     | `backend-net`                        | Coordina el clúster Kafka (puerto `2181`)  |
+| `kafka`          | `9092`      | `backend-net`                        | Broker Kafka (`PLAINTEXT://kafka:9092`)    |
+| `ms-bff`         | `8080`      | `backend-net` + `gateway-net`        | Único punto de entrada para el Gateway    |
+| ~~`frontend`~~   | `4200`      | `gateway-net`                        | **Comentado** — se ejecuta con `ng serve`  |
 
-> `postgres-db` es un servicio **interno**: sus credenciales y datos circulan solo dentro de `andesstay-net`. En producción no se publica su puerto al host; las herramientas de administración pueden habilitarlo localmente de forma opcional.
+> Los servicios de datos/core (`postgres-db`, `ms-reservations`, `ms-catalog`, `ms-audit`, `zookeeper`, `kafka`) se encuentran en `backend-net` (red interna). Solo `ms-bff` se expone a `gateway-net`/host para recibir tráfico del API Gateway.
 
 ### Ejecución Local
 
@@ -125,12 +128,18 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
    docker compose ps
    ```
 
-5. **Ejecutar el Frontend Angular** (mientras esté comentado en compose):
-   ```bash
-   cd ../../andesstay-frontend
-   npm install
-   ng serve --proxy-config proxy.conf.json
-   ```
+5. **Iniciar Zookeeper/Kafka (validación):**
+    ```bash
+    docker compose logs -f zookeeper kafka
+    # Esperar a que Kafka reporte estado healthy
+    ```
+
+6. **Ejecutar el Frontend Angular** (mientras esté comentado en compose):
+    ```bash
+    cd ../../andesstay-frontend
+    npm install
+    ng serve --proxy-config proxy.conf.json
+    ```
 
 ### Variables de Entorno (`.env`)
 
