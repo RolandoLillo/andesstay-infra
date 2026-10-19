@@ -96,10 +96,13 @@ services:
     environment:
       MS_RESERVATIONS_URL: http://ms-reservations:8082
       MS_CATALOG_URL: http://ms-catalog:8081
+      MS_AUDIT_URL: http://ms-audit:8084
     depends_on:
       ms-reservations:
         condition: service_healthy
       ms-catalog:
+        condition: service_started
+      ms-audit:
         condition: service_started
     networks:
       - backend-net
