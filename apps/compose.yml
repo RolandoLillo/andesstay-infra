@@ -54,13 +54,13 @@ services:
     container_name: andesstay-ms-catalog
     restart: unless-stopped
     environment:
-      SPRING_PROFILES_ACTIVE: prod
-      DB_URL: jdbc:postgresql://postgres-db:5432/andesstay_db
-      DB_USERNAME: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-    depends_on:
-      postgres-db:
-        condition: service_healthy
+      SERVER_PORT: 8081
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - backend-net
 
@@ -100,6 +100,12 @@ services:
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8083/api/notify/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -117,7 +123,7 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+      test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep -q 'Mode:'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -193,7 +199,7 @@ services:
       ms-reservations:
         condition: service_healthy
       ms-catalog:
-        condition: service_started
+        condition: service_healthy
       ms-audit:
         condition: service_started
       kafka:
@@ -203,6 +209,12 @@ services:
       - gateway-net
     ports:
       - "${BFF_PUBLIC_HOST:-127.0.0.1}:${BFF_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 networks:
   backend-net:
