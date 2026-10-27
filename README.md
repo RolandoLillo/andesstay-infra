@@ -102,6 +102,7 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
 | `ms-catalog`     | interno     | `backend-net`                        | Microservicio de catálogo (puerto `8081`)  |
 | `ms-audit`       | interno     | `backend-net`                        | Microservicio de auditoría (puerto `8084`) |
 | `ms-notify`      | interno     | `backend-net`                        | Microservicio de notificaciones (puerto `8083`), consume/produce en el clúster RabbitMQ (`backend-net`), depende de `rabbitmq-1`/`rabbitmq-2` (service_healthy) |
+| `ms-rabbit-admin`| interno     | `backend-net`                        | Administración de colas RabbitMQ (puerto `8085`), **sin autenticación y no expuesto al host**; pruebas vía `docker exec` en [`docs/PRUEBAS-RABBIT-ADMIN.md`](docs/PRUEBAS-RABBIT-ADMIN.md) |
 | `zookeeper`      | interno     | `backend-net`                        | Coordina el clúster Kafka (puerto `2181`)  |
 | `kafka`          | `9092`      | `backend-net`                        | Broker Kafka dual: `kafka:29092` (interno) / `localhost:9092` (host) |
 | `rabbitmq-1`     | `5672`, `15672` | `backend-net` + `gateway-net`    | Nodo **seed** del clúster RabbitMQ (`rabbit@rabbitmq-1`); expone AMQP `5672` + management UI `15672` |
@@ -109,7 +110,7 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
 | `ms-bff`         | `8080`      | `backend-net` + `gateway-net`        | Único punto de entrada para el Gateway    |
 | ~~`frontend`~~   | `4200`      | `gateway-net`                        | **Comentado** — se ejecuta con `ng serve`  |
 
-> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq-1`, `rabbitmq-2`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`) viven en `backend-net` (red interna). `ms-bff` y `rabbitmq-1` participan además en `gateway-net` y exponen puertos al host.
+> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq-1`, `rabbitmq-2`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`, `ms-rabbit-admin`) viven en `backend-net` (red interna). `ms-bff` y `rabbitmq-1` participan además en `gateway-net` y exponen puertos al host.
 
 ### Topología de Red y Acceso a Kafka
 
@@ -164,6 +165,7 @@ docker exec andesstay-rabbitmq-1 rabbitmqctl cluster_status
    - `andesstay-ms-catalog`
    - `andesstay-ms-reservations`
    - `andesstay-ms-notify`
+   - `andesstay-ms-rabbit-admin`
    - `andesstay-frontend`
 
 2. **Configurar credenciales de entorno:**
