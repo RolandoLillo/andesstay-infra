@@ -66,7 +66,7 @@ La autenticación se realiza mediante **OAuth 2.0 / OIDC** integrado con Microso
 | Tenant ID   | `cb0b9f53-0ba7-4f09-8da2-c2f5ab4b73ee`                                                 |
 | Client ID   | `4cd6df9a-e2f7-4024-aea6-dd67c49709bc`                                                 |
 | Issuer      | `https://login.microsoftonline.com/cb0b9f53-0ba7-4f09-8da2-c2f5ab4b73ee/v2.0`          |
-| Audience    | `api://4cd6df9a-e2f7-4024-aea6-dd67c49709bc`                                           |
+| Audience    | `4cd6df9a-e2f7-4024-aea6-dd67c49709bc` (sin `api://`, GUID del Client ID)                |
 | Scope (MSAL)| `access_as_user` (URI: `api://4cd6df9a-e2f7-4024-aea6-dd67c49709bc/access_as_user`)   |
 | Roles       | `Admin`, `Operador`, `Cliente`, `Auditor`                                              |
 
@@ -194,7 +194,7 @@ docker exec andesstay-rabbitmq-1 rabbitmqctl cluster_status
     ```bash
     cd ../../andesstay-frontend
     npm install
-    ng serve --proxy-config proxy.conf.json
+    ng serve  # Configurar proxy según entorno (o ajustar environment.ts)
     ```
 
 ### Variables de Entorno (`.env`)
