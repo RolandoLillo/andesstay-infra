@@ -85,7 +85,7 @@ Actualizar e instalar Docker:
 
 ```bash
 sudo dnf update -y
-sudo dnf install -y docker git curl
+sudo dnf install -y docker git
 sudo systemctl enable --now docker
 sudo usermod -aG docker ec2-user
 exit
@@ -143,6 +143,7 @@ git clone https://github.com/HeOlivares/andesstay-ms-catalog.git
 git clone https://github.com/RolandoLillo/andesstay-ms-reservations.git
 git clone https://github.com/HeOlivares/andesstay-ms-notify.git
 git clone https://github.com/RolandoLillo/andesstay-ms-audit.git
+git clone https://github.com/HeOlivares/andesstay-ms-rabbit-admin.git
 ```
 
 El frontend no es necesario para levantar el backend y no está activo en `compose.yml`. Si se va a servir, clonarlo también en `~/andesstay`.
@@ -163,7 +164,8 @@ for repo in \
   andesstay-ms-catalog \
   andesstay-ms-reservations \
   andesstay-ms-notify \
-  andesstay-ms-audit
+  andesstay-ms-audit \
+  andesstay-ms-rabbit-admin
 do
   git -C "$repo" switch main
   git -C "$repo" pull --ff-only
@@ -250,7 +252,7 @@ docker-compose --env-file ../.env ps
 Si algún servicio queda en `unhealthy`, revisar sus logs antes de continuar:
 
 ```bash
-docker-compose --env-file ../.env logs --tail=100 ms-bff ms-reservations ms-catalog ms-audit ms-notify
+docker-compose --env-file ../.env logs --tail=100 ms-bff ms-reservations ms-catalog ms-audit ms-notify ms-rabbit-admin
 ```
 
 ---
@@ -267,9 +269,10 @@ docker exec andesstay-ms-reservations wget -qO- http://localhost:8082/api/reserv
 docker exec andesstay-ms-catalog wget -qO- http://localhost:8081/actuator/health
 docker exec andesstay-ms-audit wget -qO- http://localhost:8084/api/audit/health
 docker exec andesstay-ms-notify wget -qO- http://localhost:8083/api/notify/health
+docker exec andesstay-ms-rabbit-admin wget -qO- http://localhost:8085/api/health
 ```
 
-Los health checks deben responder `200` y estado `UP`.
+Los health checks deben responder `200` y estado `UP`. `ms-rabbit-admin` debe responder `status: UP`. No publica el puerto `8085` porque no tiene autenticación: se prueba solo con `docker exec`, nunca desde el host ni desde el Gateway. Ver [PRUEBAS-RABBIT-ADMIN.md](https://github.com/RolandoLillo/andesstay-infra/blob/7372c2f/docs/PRUEBAS-RABBIT-ADMIN.md) (PR #16).
 
 ### Clúster RabbitMQ
 
@@ -365,7 +368,10 @@ Definir los tokens sin mostrarlos en pantalla ni en el historial:
 read -r -s -p 'Token valido: ' TOKEN_VALIDO; echo
 read -r -s -p 'Token Cliente: ' TOKEN_CLIENTE; echo
 read -r -s -p 'Token Auditor: ' TOKEN_AUDITOR; echo
+export TOKEN_AUDITOR
 ```
+
+`read -s` no exporta la variable; `TOKEN_AUDITOR` debe exportarse para que el script de Python lo lea desde `os.environ`.
 
 Comandos de estado (Bash/Git Bash/WSL):
 
@@ -481,9 +487,9 @@ Guardar las capturas en `evidencias/` (o en el directorio indicado por el curso)
 - `10-rabbit-cluster.png`: `cluster_status` mostrando `rabbit@rabbitmq-1` y `rabbit@rabbitmq-2`.
 - `11-rabbit-queues.png`: Management UI o `rabbitmqctl list_queues` con las colas `q.cmd.*` y sus `.dlq`.
 - `12-publish-consume.png`: publicación en `cmd.direct` (`email.send`) y consumo/cola vacía con consumidor activo.
-- `13-gateway.png`: API Gateway con rutas y JWT Authorizer configurados.
-- `14-ec2-security-group.png`: instancia EC2 y Security Group con solo los puertos `22` y `8080` de entrada.
-- `15-pruebas-gateway.png`: resultados de las pruebas `200/401/403/404` por Gateway.
+- `20-pruebas-gateway.png`: resultados de las pruebas `200/401/403/404` por Gateway.
+- `21-gateway-config.png`: API Gateway con rutas y JWT Authorizer configurados.
+- `22-ec2-security-group.png`: instancia EC2 y Security Group con solo los puertos `22` y `8080` de entrada.
 
 Antes de adjuntar:
 
@@ -503,7 +509,8 @@ Antes de adjuntar:
 - [ ] Security Group con solo `22` y `8080` de entrada.
 - [ ] Stack levantado y servicios saludables.
 - [ ] Clúster RabbitMQ con dos nodos y colas declaradas.
+- [ ] `ms-rabbit-admin` saludable vía `docker exec` y sin puerto publicado.
 - [ ] Gateway actualizado con la IP pública actual.
 - [ ] Pruebas por Gateway con los códigos esperados.
-- [ ] Capturas `10` a `15` obtenidas y sanitizadas.
+- [ ] Capturas `10` a `12` y `20` a `22` obtenidas y sanitizadas.
 - [ ] Ningún comando de AWS ejecutado desde el agente.
