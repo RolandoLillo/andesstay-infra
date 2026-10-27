@@ -20,10 +20,10 @@ Parameters:
     Description: Nombre del stage de despliegue
   BffUrl:
     Type: String
-    Default: "http://<EC2_PUBLIC_IP>:8080/{proxy}"
+    Default: "http://<EC2_PUBLIC_IP>:8080"
     Description: >
-      URL del Backend-for-Frontend (o NLB publico) al que el API Gateway
-      reenvia las peticiones. Ejemplo produccion EC2:
+      URL base del Backend-for-Frontend (o NLB publico) al que el API Gateway
+      reenvia las peticiones, sin ruta ni sufijo /{proxy}. Ejemplo produccion EC2:
       http://<EC2_PUBLIC_IP>:8080 o un dominio NLB/ALB. (Reemplazar <EC2_PUBLIC_IP> al desplegar)
   AllowedOriginLocal:
     Type: String
@@ -89,6 +89,8 @@ Resources:
       IntegrationType: HTTP_PROXY
       IntegrationUri: !Ref BffUrl
       IntegrationMethod: ANY
+      RequestParameters:
+        "overwrite:path": $request.path
       PayloadFormatVersion: "1.0"
       TimeoutInMillis: 30000
 

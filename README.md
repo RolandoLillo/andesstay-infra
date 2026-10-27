@@ -194,7 +194,7 @@ docker exec andesstay-rabbitmq-1 rabbitmqctl cluster_status
     ```bash
     cd ../../andesstay-frontend
     npm install
-    ng serve  # Configurar proxy según entorno (o ajustar environment.ts)
+    ng serve  # environment.apiUrl debe apuntar al endpoint del API Gateway (output HttpApiEndpoint)
     ```
 
 ### Variables de Entorno (`.env`)
@@ -223,16 +223,20 @@ aws cloudformation deploy \
   --template-file aws/api-gateway/http-api.yml \
   --stack-name andesstay-api-gateway \
   --parameter-overrides \
-      BffUrl=<URL_O_IP_DEL_BFF> \
+      BffUrl=http://<EC2_PUBLIC_IP>:8080 \
       AllowedOriginPublic=<ORIGEN_PERMITIDO> \
   --capabilities CAPABILITY_IAM
 ```
+
+> `BffUrl` debe ser solo `http://<IP_o_host>:8080`, sin `/{proxy}` ni ninguna ruta adicional. La integración reenvía la ruta original mediante `overwrite:path: $request.path`, por lo que el BFF recibe la ruta completa (`/api/...`).
 
 > `TenantId` y `ApiClientId` traen como default los IDs de la App Registration de AndesStay (`cb0b9f53-...` / `4cd6df9a-...`), por lo que no hace falta pasarlos salvo que se apunte a otro entorno.
 
 El endpoint público se obtiene del output `HttpApiEndpoint` (`https://<API_ID>.execute-api.<REGION>.amazonaws.com`).
 
 > En producción, el tráfico del Gateway al BFF debería usar una NLB/VPC Link privada. Este template expone `BffUrl` como parámetro para el caso EC2 público de la fase actual.
+
+> El Gateway solo expone los métodos listados en el mapeo de rutas. `PATCH` y `DELETE` de catálogo y reservas no están expuestos porque el frontend no los usa; si se necesitan, se deben agregar rutas explícitas en `aws/api-gateway/http-api.yml`.
 
 ---
 
