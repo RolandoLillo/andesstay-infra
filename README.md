@@ -240,6 +240,8 @@ El endpoint público se obtiene del output `HttpApiEndpoint` (`https://<API_ID>.
 
 > El Gateway solo expone los métodos listados en el mapeo de rutas. `PATCH` y `DELETE` de catálogo y reservas no están expuestos porque el frontend no los usa; si se necesitan, se deben agregar rutas explícitas en `aws/api-gateway/http-api.yml`.
 
+> Para preparar la instancia EC2, configurar el Security Group y ejecutar las pruebas con evidencias, seguir el [checklist de despliegue en EC2](docs/DESPLIEGUE-EC2.md).
+
 ---
 
 ## 🧪 Validaciones y Pruebas Postman
