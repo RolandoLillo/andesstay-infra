@@ -20,21 +20,21 @@ Parameters:
     Description: Nombre del stage de despliegue
   BffUrl:
     Type: String
-    Default: "http://3.87.83.6:8080/{proxy}"
+    Default: "http://<EC2_PUBLIC_IP>:8080"
     Description: >
-      URL del Backend-for-Frontend (o NLB publico) al que el API Gateway
-      reenvia las peticiones. Ejemplo produccion EC2:
-      http://<EC2_PUBLIC_IP>:8080 o un dominio NLB/ALB.
+      URL base del Backend-for-Frontend (o NLB publico) al que el API Gateway
+      reenvia las peticiones, sin ruta ni sufijo /{proxy}. Ejemplo produccion EC2:
+      http://<EC2_PUBLIC_IP>:8080 o un dominio NLB/ALB. (Reemplazar <EC2_PUBLIC_IP> al desplegar)
   AllowedOriginLocal:
     Type: String
     Default: "http://localhost:4200"
     Description: Origen CORS para el frontend Angular local
   AllowedOriginPublic:
     Type: String
-    Default: "http://localhost:4200"
+    Default: "http://<FRONTEND_PUBLIC_ORIGIN>"
     Description: >
-      Origen CORS del frontend en produccion (ej. http://<EC2_PUBLIC_IP>
-      o el dominio del frontend). Se puede sobrescribir via CLI.
+      Origen CORS del frontend en produccion (ej. http://<EC2_PUBLIC_IP> o el dominio del frontend). 
+      Se debe parametrizar por entorno (sobrescribir via CLI). Solo un origen permitido.
 
 Resources:
 
@@ -89,6 +89,8 @@ Resources:
       IntegrationType: HTTP_PROXY
       IntegrationUri: !Ref BffUrl
       IntegrationMethod: ANY
+      RequestParameters:
+        "overwrite:path": $request.path
       PayloadFormatVersion: "1.0"
       TimeoutInMillis: 30000
 
@@ -98,6 +100,14 @@ Resources:
 
   # --- Public Check ---
   HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/health
+      AuthorizationType: NONE
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  HealthRouteReservations:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
@@ -175,7 +185,7 @@ Resources:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
-      RouteKey: GET /api/catalog
+      RouteKey: GET /api/catalog/units
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       AuthorizationScopes:
@@ -186,7 +196,7 @@ Resources:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
-      RouteKey: POST /api/catalog
+      RouteKey: POST /api/catalog/units
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       AuthorizationScopes:
@@ -197,7 +207,7 @@ Resources:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
-      RouteKey: PUT /api/catalog
+      RouteKey: PUT /api/catalog/units/{id}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       AuthorizationScopes:
@@ -226,14 +236,19 @@ Resources:
         - access_as_user
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
 
-  # Catch-all: any other route returns 404 before hitting the BFF
-  DefaultRoute:
+  AuditProxyRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
-      RouteKey: $default
-      AuthorizationType: NONE
+      RouteKey: GET /api/audit/{proxy+}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  # Catch-all: require JWT (no anonymous default)
+  # DefaultRoute eliminado para exigir JWT en rutas no explícitas
 
   # =============================
   # Stage (auto-deploy)

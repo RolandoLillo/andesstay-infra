@@ -66,7 +66,7 @@ La autenticación se realiza mediante **OAuth 2.0 / OIDC** integrado con Microso
 | Tenant ID   | `cb0b9f53-0ba7-4f09-8da2-c2f5ab4b73ee`                                                 |
 | Client ID   | `4cd6df9a-e2f7-4024-aea6-dd67c49709bc`                                                 |
 | Issuer      | `https://login.microsoftonline.com/cb0b9f53-0ba7-4f09-8da2-c2f5ab4b73ee/v2.0`          |
-| Audience    | `api://4cd6df9a-e2f7-4024-aea6-dd67c49709bc`                                           |
+| Audience    | `4cd6df9a-e2f7-4024-aea6-dd67c49709bc` (sin `api://`, GUID del Client ID)                |
 | Scope (MSAL)| `access_as_user` (URI: `api://4cd6df9a-e2f7-4024-aea6-dd67c49709bc/access_as_user`)   |
 | Roles       | `Admin`, `Operador`, `Cliente`, `Auditor`                                              |
 
@@ -194,7 +194,7 @@ docker exec andesstay-rabbitmq-1 rabbitmqctl cluster_status
     ```bash
     cd ../../andesstay-frontend
     npm install
-    ng serve --proxy-config proxy.conf.json
+    ng serve  # environment.apiUrl debe apuntar al endpoint del API Gateway (output HttpApiEndpoint)
     ```
 
 ### Variables de Entorno (`.env`)
@@ -223,16 +223,20 @@ aws cloudformation deploy \
   --template-file aws/api-gateway/http-api.yml \
   --stack-name andesstay-api-gateway \
   --parameter-overrides \
-      BffUrl=<URL_O_IP_DEL_BFF> \
+      BffUrl=http://<EC2_PUBLIC_IP>:8080 \
       AllowedOriginPublic=<ORIGEN_PERMITIDO> \
   --capabilities CAPABILITY_IAM
 ```
+
+> `BffUrl` debe ser solo `http://<IP_o_host>:8080`, sin `/{proxy}` ni ninguna ruta adicional. La integración reenvía la ruta original mediante `overwrite:path: $request.path`, por lo que el BFF recibe la ruta completa (`/api/...`).
 
 > `TenantId` y `ApiClientId` traen como default los IDs de la App Registration de AndesStay (`cb0b9f53-...` / `4cd6df9a-...`), por lo que no hace falta pasarlos salvo que se apunte a otro entorno.
 
 El endpoint público se obtiene del output `HttpApiEndpoint` (`https://<API_ID>.execute-api.<REGION>.amazonaws.com`).
 
 > En producción, el tráfico del Gateway al BFF debería usar una NLB/VPC Link privada. Este template expone `BffUrl` como parámetro para el caso EC2 público de la fase actual.
+
+> El Gateway solo expone los métodos listados en el mapeo de rutas. `PATCH` y `DELETE` de catálogo y reservas no están expuestos porque el frontend no los usa; si se necesitan, se deben agregar rutas explícitas en `aws/api-gateway/http-api.yml`.
 
 ---
 
