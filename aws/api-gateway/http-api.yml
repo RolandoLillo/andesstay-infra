@@ -20,21 +20,21 @@ Parameters:
     Description: Nombre del stage de despliegue
   BffUrl:
     Type: String
-    Default: "http://<EC2_PUBLIC_IP>:8080"
+    Default: "http://3.87.83.6:8080"
     Description: >
-      URL base del Backend-for-Frontend (o NLB publico) al que el API Gateway
-      reenvia las peticiones, sin ruta ni sufijo /{proxy}. Ejemplo produccion EC2:
-      http://<EC2_PUBLIC_IP>:8080 o un dominio NLB/ALB. (Reemplazar <EC2_PUBLIC_IP> al desplegar)
+      URL base del Backend-for-Frontend al que el API Gateway reenvia las
+      peticiones, sin ruta ni sufijo /{proxy}. Valor documentado en docs/GATEWAY.md;
+      sobrescribir con la IP publica vigente al desplegar.
   AllowedOriginLocal:
     Type: String
     Default: "http://localhost:4200"
     Description: Origen CORS para el frontend Angular local
   AllowedOriginPublic:
     Type: String
-    Default: "http://<FRONTEND_PUBLIC_ORIGIN>"
+    Default: "http://3.87.83.6"
     Description: >
-      Origen CORS del frontend en produccion (ej. http://<EC2_PUBLIC_IP> o el dominio del frontend). 
-      Se debe parametrizar por entorno (sobrescribir via CLI). Solo un origen permitido.
+      Origen CORS del frontend servido por nginx en EC2. Valor documentado en
+      docs/GATEWAY.md; sobrescribir via CLI si cambia la IP o se usa dominio.
 
 Resources:
 
@@ -115,15 +115,6 @@ Resources:
       AuthorizationType: NONE
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
 
-  # --- Preflight CORS (pública, sin JWT) ---
-  OptionsProxyRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: OPTIONS /{proxy+}
-      AuthorizationType: NONE
-      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
-
   # --- Protegidas (requieren JWT + scopes) ---
 
   GetReservationsRoute:
@@ -164,6 +155,17 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: PUT /api/reservations/{id}/status
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      AuthorizationScopes:
+        - access_as_user
+      Target: !Join ["/", ["integrations", !Ref BffIntegration]]
+
+  UpdateReservationPreparationRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /api/reservations/{id}/preparation
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       AuthorizationScopes:
