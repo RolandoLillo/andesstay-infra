@@ -20,21 +20,21 @@ Parameters:
     Description: Nombre del stage de despliegue
   BffUrl:
     Type: String
-    Default: "http://3.87.83.6:8080"
+    Default: "http://<EC2_PUBLIC_IP>:8080"
     Description: >
       URL base del Backend-for-Frontend al que el API Gateway reenvia las
-      peticiones, sin ruta ni sufijo /{proxy}. Valor documentado en docs/GATEWAY.md;
-      sobrescribir con la IP publica vigente al desplegar.
+      peticiones, sin ruta ni sufijo /{proxy}. Sobrescribir con la IP publica
+      vigente al desplegar.
   AllowedOriginLocal:
     Type: String
     Default: "http://localhost:4200"
     Description: Origen CORS para el frontend Angular local
   AllowedOriginPublic:
     Type: String
-    Default: "http://3.87.83.6"
+    Default: "http://<FRONTEND_PUBLIC_ORIGIN>"
     Description: >
-      Origen CORS del frontend servido por nginx en EC2. Valor documentado en
-      docs/GATEWAY.md; sobrescribir via CLI si cambia la IP o se usa dominio.
+      Origen CORS del frontend servido por nginx en EC2. Sobrescribir via CLI
+      con la IP publica vigente o el dominio del frontend.
 
 Resources:
 
