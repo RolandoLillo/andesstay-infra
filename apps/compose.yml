@@ -109,6 +109,8 @@ services:
       SPRING_RABBITMQ_ADDRESSES: rabbitmq-1:5672,rabbitmq-2:5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_KAFKA_LISTENER_AUTO_STARTUP: "${NOTIFY_KAFKA_AUTO_STARTUP:-false}"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8083/api/notify/health"]
       interval: 15s

@@ -189,6 +189,8 @@ do
 done
 ```
 
+`andesstay-ms-notify` debe estar en `main` con el merge `9f2b270` (PR #23), que incorpora `spring-kafka` y el listener de `reservations.activity`. La imagen `andesstay/ms-notify:latest` tiene que reconstruirse desde ese commit; no reutilizar una imagen anterior.
+
 ---
 
 ## 5. Crear y ajustar el archivo `.env`
@@ -212,6 +214,7 @@ BFF_PORT=8080
 FRONTEND_PUBLIC_HOST=0.0.0.0
 FRONTEND_PORT=80
 FRONTEND_PUBLIC_ORIGIN=http://<IP_PUBLICA_DE_LA_INSTANCIA>
+NOTIFY_KAFKA_AUTO_STARTUP=false
 
 AWS_REGION=us-east-1
 AWS_EC2_PUBLIC_IP=<IP_PUBLICA_DE_LA_INSTANCIA>
@@ -222,6 +225,7 @@ Puntos importantes:
 
 - `BFF_PUBLIC_HOST=0.0.0.0` es obligatorio en EC2. Con `127.0.0.1` el API Gateway no puede alcanzar el BFF.
 - `FRONTEND_PUBLIC_ORIGIN` debe coincidir con el origen permitido en el Gateway y con la Redirect/Logout URI de Entra ID.
+- `NOTIFY_KAFKA_AUTO_STARTUP=false` mantiene activos los consumidores Rabbit (`q.cmd.email`, `q.cmd.housekeeping`, `q.cmd.voucher` y `q.cmd.cabin.ready`) y pausa solo el listener Kafka de `reservations.activity`; cambiarlo a `true` solo cuando haya productor en `main` de reservations.
 - `environment.prod.ts` trae los valores documentados en `docs/GATEWAY.md`; si la IP cambia, actualizarlo antes de construir el frontend.
 - No reutilizar las contraseñas de ejemplo en el laboratorio.
 - Mantener el `.env` con permisos `600`.
@@ -244,6 +248,15 @@ Los comandos se ejecutan desde `apps` y usan el `.env` de la raíz del repositor
 ```bash
 cd ~/andesstay/andesstay-infra/apps
 ```
+
+Reconstruir `ms-notify` desde `main` antes de arrancar el stack (imprescindible si la imagen `andesstay/ms-notify:latest` viene de un despliegue anterior):
+
+```bash
+git -C ~/andesstay/andesstay-ms-notify rev-parse --short HEAD
+docker-compose --env-file ../.env build ms-notify
+```
+
+El `HEAD` debe ser `9f2b270` o posterior: esa versión incluye `spring-kafka`, el health `http://localhost:8083/api/notify/health` y el consumidor Rabbit de `q.cmd.cabin.ready`.
 
 En una instancia con RAM suficiente:
 
@@ -304,6 +317,8 @@ docker exec andesstay-ms-rabbit-admin wget -qO- http://localhost:8085/api/health
 
 Los health checks deben responder `200` y estado `UP`. `ms-rabbit-admin` debe responder `status: UP`. No publica el puerto `8085` porque no tiene autenticación: se prueba solo con `docker exec`, nunca desde el host ni desde el Gateway. Ver [PRUEBAS-RABBIT-ADMIN.md](https://github.com/RolandoLillo/andesstay-infra/blob/7372c2f/docs/PRUEBAS-RABBIT-ADMIN.md) (PR #16).
 
+El health de `ms-notify` es `http://localhost:8083/api/notify/health` y se verifica dentro del contenedor con el `docker exec` anterior; el puerto `8083` no se publica en EC2.
+
 Solo los puertos `80` y `8080` deben responder desde fuera de la instancia. Kafka y PostgreSQL no publican puertos; RabbitMQ publica `5672` y `15672` solo en `127.0.0.1`. Verificar con `docker-compose --env-file ../.env ps --format table`.
 
 ### Clúster RabbitMQ
@@ -319,7 +334,25 @@ Deben aparecer los dos nodos `rabbit@rabbitmq-1` y `rabbit@rabbitmq-2` en ejecuc
 - `q.cmd.email`
 - `q.cmd.housekeeping`
 - `q.cmd.voucher`
+- `q.cmd.cabin.ready`
 - sus respectivas `.dlq`
+
+### Consumidor de actividad de reservas (Kafka, opcional)
+
+Por defecto `NOTIFY_KAFKA_AUTO_STARTUP=false`: los consumidores Rabbit siguen activos, incluido `q.cmd.cabin.ready`, y solo queda pausado el `@KafkaListener` de `reservations.activity`. Hoy no hay productor de ese tópico en `main` de reservations (R-02/R-05 pendientes), por eso no se enciende por defecto. El grupo por defecto es `notify-activity` (`spring.kafka.consumer.group-id`), no hace falta pasarlo.
+
+Para encender el consumidor cuando el productor esté disponible:
+
+```bash
+cd ~/andesstay/andesstay-infra
+nano .env
+# NOTIFY_KAFKA_AUTO_STARTUP=true
+cd apps
+docker-compose --env-file ../.env up -d --force-recreate ms-notify
+docker-compose --env-file ../.env logs --tail=100 ms-notify
+```
+
+Para volver a pausarlo, restaurar `NOTIFY_KAFKA_AUTO_STARTUP=false` y repetir el `up -d --force-recreate ms-notify`.
 
 ### Acceso a la Management UI por túnel SSH
 
@@ -542,7 +575,9 @@ Antes de adjuntar:
 - [ ] Security Group con solo `22`, `80` y `8080` de entrada.
 - [ ] Stack levantado, incluido el frontend, y servicios saludables.
 - [ ] Frontend compilado con `environment.prod.ts` y sirviendo en el puerto `80`.
-- [ ] Clúster RabbitMQ con dos nodos y colas declaradas.
+- [ ] Clúster RabbitMQ con dos nodos y colas declaradas, incluida `q.cmd.cabin.ready`.
+- [ ] Imagen `andesstay/ms-notify:latest` reconstruida desde `main` de notify (`9f2b270` o posterior, PR #23) con `spring-kafka`.
+- [ ] `NOTIFY_KAFKA_AUTO_STARTUP` revisado (`false` por defecto; `true` solo si se prueba `reservations.activity`).
 - [ ] `ms-rabbit-admin` saludable vía `docker exec` y sin puerto publicado.
 - [ ] Gateway actualizado con la IP pública y el origen del frontend.
 - [ ] Redirect URI y Logout URI de Entra ID actualizadas.
