@@ -2,7 +2,7 @@
 
 Checklist operativo para desplegar AndesStay en una instancia **Amazon Linux 2023** con Docker, Docker Compose y swap.
 
-> **Alcance:** este documento es para ejecución manual del operador. Incluye el frontend nginx en el puerto `80` y el BFF en `8080`. No se ejecutó ningún comando en AWS para prepararlo.
+> **Alcance:** este documento es para ejecución manual del operador. Incluye el frontend detrás de Caddy en HTTPS (`80` redirección/ACME y `443`), el BFF en `8080` y la reutilización del API Gateway existente `lmv59t05gg`. No se ejecutó ningún comando en AWS para prepararlo.
 >
 > **Regla de seguridad:** no guardar tokens, contraseñas ni el archivo `.env` en el repositorio. No mostrar tokens en capturas de pantalla.
 
@@ -13,7 +13,7 @@ Checklist operativo para desplegar AndesStay en una instancia **Amazon Linux 202
 - Instancia EC2 con **Amazon Linux 2023**, usuario `ec2-user`.
 - Key pair `.pem` con permisos restringidos.
 - Disco recomendado: **20 GB o más** (las imágenes y el build de Maven/Docker consumen espacio).
-- Elastic IP recomendada. Si no se usa, la IP pública cambia al detener/iniciar la instancia y hay que actualizar el Gateway.
+- **Elastic IP obligatoria**: `sslip.io`, la emisión del certificado de Caddy y el integration URI del Gateway dependen de que la IP no cambie. Una Elastic IP tiene costo mientras esté asignada: confirmar con el operador antes de reservarla.
 - Repositorios hermanos en el mismo directorio padre.
 - AWS CLI configurado en el equipo desde donde se actualiza CloudFormation, o credenciales disponibles para ese paso.
 - Acceso a los tokens de prueba de Entra ID: válido, Cliente y Auditor.
@@ -44,12 +44,13 @@ Configurar el Security Group de la instancia con **solo** estas reglas de entrad
 | Tipo | Protocolo | Puerto | Origen | Uso |
 |---|---|---|---|---|
 | SSH | TCP | `22` | `<TU_IP_PUBLICA>/32` | Administración |
-| HTTP frontend | TCP | `80` | `0.0.0.0/0` | Angular servido por nginx |
+| HTTP/ACME | TCP | `80` | `0.0.0.0/0` | Redirección a HTTPS y validación ACME de Caddy |
+| HTTPS frontend | TCP | `443` | `0.0.0.0/0` | Caddy → contenedor interno del frontend |
 | HTTP API BFF | TCP | `8080` | `0.0.0.0/0` | Acceso del API Gateway al BFF |
 
 Salida: dejar la regla por defecto (todo el tráfico saliente).
 
-**No abrir** `5432`, `9092`, `5672` ni `15672` a Internet. `compose.yml` publica RabbitMQ solo en `127.0.0.1`; la UI se administra por túnel SSH.
+**No abrir** `5432`, `9092`, `5672`, `15672` ni `8081-8085` (salvo `8080`, ya listado) a Internet. `compose.yml` publica RabbitMQ solo en `127.0.0.1`; la UI se administra por túnel SSH. El frontend no publica `80` en el host: solo Caddy publica `80` y `443`.
 
 Comandos opcionales con AWS CLI:
 
@@ -66,6 +67,11 @@ aws ec2 authorize-security-group-ingress \
 aws ec2 authorize-security-group-ingress \
   --group-id "$SG_ID" \
   --protocol tcp --port 80 --cidr 0.0.0.0/0 \
+  --region "$AWS_REGION"
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
+  --protocol tcp --port 443 --cidr 0.0.0.0/0 \
   --region "$AWS_REGION"
 
 aws ec2 authorize-security-group-ingress \
@@ -161,7 +167,7 @@ git clone https://github.com/HeOlivares/andesstay-ms-rabbit-admin.git
 git clone https://github.com/cristianmonsalve14/andesstay-frontend.git
 ```
 
-El frontend se sirve con el servicio `frontend` de `compose.yml` en el puerto `80`.
+El repositorio `andesstay-frontend` debe estar en `main` con PR #28 mergeado. El compose construye la SPA con `ANDESSTAY_API_URL` y `ANDESSTAY_REDIRECT_URI`, y Caddy la sirve en `https://${FRONTEND_DOMAIN}`; el contenedor `andesstay-frontend` solo escucha en `gateway-net`, sin puerto publicado en el host.
 
 Verificar la estructura esperada:
 
@@ -211,22 +217,23 @@ RABBITMQ_ERLANG_COOKIE=<COOKIE_FUERTE_Y_UNICA>
 
 BFF_PUBLIC_HOST=0.0.0.0
 BFF_PORT=8080
-FRONTEND_PUBLIC_HOST=0.0.0.0
-FRONTEND_PORT=80
-FRONTEND_PUBLIC_ORIGIN=http://<IP_PUBLICA_DE_LA_INSTANCIA>
+FRONTEND_DOMAIN=<IP_ELASTICA_CON_GUIONES>.sslip.io
+ANDESSTAY_API_URL=https://lmv59t05gg.execute-api.us-east-1.amazonaws.com/prod/api
 NOTIFY_KAFKA_AUTO_STARTUP=false
 
 AWS_REGION=us-east-1
-AWS_EC2_PUBLIC_IP=<IP_PUBLICA_DE_LA_INSTANCIA>
-AWS_API_ENDPOINT=https://<API_ID>.execute-api.us-east-1.amazonaws.com
+AWS_API_ID=lmv59t05gg
+AWS_EC2_PUBLIC_IP=<IP_ELASTICA>
+AWS_API_ENDPOINT=https://lmv59t05gg.execute-api.us-east-1.amazonaws.com/prod/api
 ```
 
 Puntos importantes:
 
 - `BFF_PUBLIC_HOST=0.0.0.0` es obligatorio en EC2. Con `127.0.0.1` el API Gateway no puede alcanzar el BFF.
-- `FRONTEND_PUBLIC_ORIGIN` debe coincidir con el origen permitido en el Gateway y con la Redirect/Logout URI de Entra ID.
+- `FRONTEND_DOMAIN` es solo el host (`54-211-241-28.sslip.io`), sin `https://` ni barra final. Debe coincidir exactamente con el origen CORS del Gateway y con la Redirect/Logout URI de Entra ID: `https://${FRONTEND_DOMAIN}`.
+- `ANDESSTAY_API_URL` apunta al API Gateway existente y ya incluye `/prod/api`.
+- El compose pasa ambos valores como build args al frontend; el `redirectUri` por defecto de `environment.prod.ts` queda sobreescrito, pero PR #28 debe estar mergeado para que el Dockerfile los acepte.
 - `NOTIFY_KAFKA_AUTO_STARTUP=false` mantiene activos los consumidores Rabbit (`q.cmd.email`, `q.cmd.housekeeping`, `q.cmd.voucher` y `q.cmd.cabin.ready`) y pausa solo el listener Kafka de `reservations.activity`; cambiarlo a `true` solo cuando haya productor en `main` de reservations.
-- `environment.prod.ts` trae los valores documentados en `docs/GATEWAY.md`; si la IP cambia, actualizarlo antes de construir el frontend.
 - No reutilizar las contraseñas de ejemplo en el laboratorio.
 - Mantener el `.env` con permisos `600`.
 - No commitear el `.env` ni pegar su contenido en el chat o en capturas.
@@ -236,6 +243,8 @@ Verificación sin imprimir secretos:
 ```bash
 test -f .env && echo '.env existe'
 grep -q '^BFF_PUBLIC_HOST=0.0.0.0$' .env && echo 'BFF_PUBLIC_HOST OK'
+grep -q '^FRONTEND_DOMAIN=' .env && echo 'FRONTEND_DOMAIN definido'
+export FRONTEND_DOMAIN="$(grep '^FRONTEND_DOMAIN=' .env | cut -d= -f2-)"
 stat -c '%a %n' .env
 ```
 
@@ -262,6 +271,12 @@ En una instancia con RAM suficiente:
 
 ```bash
 docker-compose --env-file ../.env up --build -d --remove-orphans
+```
+
+Si cambia `FRONTEND_DOMAIN` o `ANDESSTAY_API_URL`, forzar rebuild sin caché del frontend; los build args no se actualizan con un simple `restart`:
+
+```bash
+docker-compose --env-file ../.env build --no-cache frontend
 ```
 
 En `t3.micro`, construir de forma secuencial:
@@ -306,7 +321,8 @@ docker-compose --env-file ../.env up -d --remove-orphans
 ```bash
 curl -sS -o /dev/null -w 'BFF actuator: %{http_code}\n' http://127.0.0.1:8080/actuator/health
 curl -sS -o /dev/null -w 'BFF api/health: %{http_code}\n' http://127.0.0.1:8080/api/health
-curl -sS -o /dev/null -w 'Frontend health: %{http_code}\n' http://127.0.0.1/health
+curl -sS -o /dev/null -w 'Caddy HTTPS health: %{http_code}\n' "https://${FRONTEND_DOMAIN}/health"
+docker exec andesstay-frontend wget -qO- http://localhost/health
 
 docker exec andesstay-ms-reservations wget -qO- http://localhost:8082/api/reservations/health
 docker exec andesstay-ms-catalog wget -qO- http://localhost:8081/actuator/health
@@ -319,7 +335,7 @@ Los health checks deben responder `200` y estado `UP`. `ms-rabbit-admin` debe re
 
 El health de `ms-notify` es `http://localhost:8083/api/notify/health` y se verifica dentro del contenedor con el `docker exec` anterior; el puerto `8083` no se publica en EC2.
 
-Solo los puertos `80` y `8080` deben responder desde fuera de la instancia. Kafka y PostgreSQL no publican puertos; RabbitMQ publica `5672` y `15672` solo en `127.0.0.1`. Verificar con `docker-compose --env-file ../.env ps --format table`.
+Solo los puertos `80`, `443` y `8080` deben responder desde fuera de la instancia. Kafka y PostgreSQL no publican puertos; RabbitMQ publica `5672` y `15672` solo en `127.0.0.1`. Verificar con `docker-compose --env-file ../.env ps --format table`: `andesstay-frontend` no debe aparecer con puertos publicados.
 
 ### Clúster RabbitMQ
 
@@ -396,31 +412,44 @@ EC2_PUBLIC_IP=$(curl -s \
 echo "$EC2_PUBLIC_IP"
 ```
 
-Desplegar/actualizar el stack desde la raíz de `andesstay-infra`, previa confirmación del operador:
+Actualizar el API existente desde la raíz de `andesstay-infra`, previa confirmación del operador. No se crea stack ni API nuevo:
 
 ```bash
 export AWS_REGION=us-east-1
-export FRONTEND_PUBLIC_ORIGIN="http://${EC2_PUBLIC_IP}"
+export EC2_PUBLIC_IP=<ELASTIC_IP>
+export API_ID=lmv59t05gg
+export FRONTEND_DOMAIN=<IP_ELASTICA_CON_GUIONES>.sslip.io
 ./aws/api-gateway/deploy.sh
 ```
 
-El script usa `EC2_PUBLIC_IP`, aplica `BffUrl="http://${EC2_PUBLIC_IP}:8080"` y `AllowedOriginPublic="${FRONTEND_PUBLIC_ORIGIN}"`, y muestra el endpoint resultante.
-
-Obtener el endpoint:
+El script reutiliza `lmv59t05gg`, aplica `AllowOrigins=https://${FRONTEND_DOMAIN}` (exacto, sin barra final), mantiene `Authorization` en `AllowHeaders` y actualiza la integración HTTP_PROXY a `http://${EC2_PUBLIC_IP}:8080`.
 
 ```bash
-API=$(aws cloudformation describe-stacks \
-  --stack-name andesstay-api-gateway \
-  --query "Stacks[0].Outputs[?OutputKey=='HttpApiEndpoint'].OutputValue" \
-  --output text \
-  --region us-east-1)
-API="${API%/}/prod"
-echo "$API"
+export API_BASE="https://${API_ID}.execute-api.${AWS_REGION}.amazonaws.com/prod/api"
+echo "$API_BASE"
 ```
 
-> `BffUrl` debe ser solo `http://<IP>:8080`, sin `/{proxy}`. La plantilla reenvía la ruta completa mediante `overwrite:path`.
+> `IntegrationUri` debe ser solo `http://<ELASTIC_IP>:8080`, sin `/{proxy}`. La integración reenvía la ruta completa mediante `overwrite:path`.
 
-Registrar `FRONTEND_PUBLIC_ORIGIN` como Redirect URI y Logout URI en la app registration de Entra ID. MSAL usa el mismo valor para ambas; debe ser idéntico al `redirectUri` de `environment.prod.ts`.
+Registrar valores exactos en la app registration de Entra ID:
+
+- Redirect URI (SPA): `https://${FRONTEND_DOMAIN}`
+- Logout URI: `https://${FRONTEND_DOMAIN}`
+
+Son idénticas y coinciden con el `ANDESSTAY_REDIRECT_URI` inyectado por el compose en el build del frontend. El BFF también debe permitir ese origen si aplica CORS allí (otro repo, confirmar con su responsable).
+
+### Verificación HTTPS y certificado
+
+```bash
+curl -I "https://${FRONTEND_DOMAIN}"
+curl -sS -o /dev/null -w 'health: %{http_code}\n' "https://${FRONTEND_DOMAIN}/health"
+```
+
+La primera respuesta debe mostrar `HTTP/2 200` y un certificado válido emitido por Let's Encrypt. Si Caddy está esperando la validación ACME, revisar logs con `docker-compose --env-file ../.env logs --tail=100 caddy`; el puerto `80` debe estar accesible desde Internet para la emisión y renovación.
+
+### Alternativa CloudFront (documentada, no implementada)
+
+Si Let's Encrypt o `sslip.io` no funcionaran en el laboratorio, la alternativa es publicar el mismo origen del frontend mediante CloudFront con un certificado administrado en ACM (región `us-east-1`) y actualizar Gateway/CORS y Entra ID al dominio de CloudFront. Esta opción no está implementada en este repositorio.
 
 ---
 
@@ -553,9 +582,9 @@ Guardar las capturas en `evidencias/` (o en el directorio indicado por el curso)
 - `12-publish-consume.png`: publicación en `cmd.direct` (`email.send`) y consumo/cola vacía con consumidor activo.
 - `20-pruebas-gateway.png`: resultados de las pruebas `200/401/403/404` por Gateway.
 - `21-gateway-config.png`: API Gateway con rutas y JWT Authorizer configurados.
-- `22-ec2-security-group.png`: instancia EC2 y Security Group con solo los puertos `22`, `80` y `8080` de entrada.
-- `23-frontend-ec2.png`: frontend Angular cargado desde `http://<IP_PUBLICA>` y login MSAL completado.
-- `24-entra-redirect.png`: Redirect URI y Logout URI de Entra ID con el mismo origen del frontend.
+- `22-ec2-security-group.png`: instancia EC2 y Security Group con solo los puertos `22`, `80`, `443` y `8080` de entrada.
+- `23-frontend-ec2.png`: frontend Angular cargado desde `https://${FRONTEND_DOMAIN}` con certificado válido y login MSAL completado.
+- `24-entra-redirect.png`: Redirect URI y Logout URI de Entra ID con valor exacto `https://${FRONTEND_DOMAIN}`.
 
 Antes de adjuntar:
 
@@ -570,17 +599,20 @@ Antes de adjuntar:
 
 - [ ] Instancia Amazon Linux 2023 preparada con Docker y `docker-compose`.
 - [ ] Swap creado y visible en `swapon --show`.
-- [ ] Repositorios hermanos clonados en `~/andesstay`.
-- [ ] `.env` creado desde `.env.example`, con permisos `600` y `BFF_PUBLIC_HOST=0.0.0.0`.
-- [ ] Security Group con solo `22`, `80` y `8080` de entrada.
-- [ ] Stack levantado, incluido el frontend, y servicios saludables.
-- [ ] Frontend compilado con `environment.prod.ts` y sirviendo en el puerto `80`.
+- [ ] Elastic IP asignada, con costo confirmado por el operador.
+- [ ] Repositorios hermanos clonados en `~/andesstay`; frontend en `main` con PR #28 mergeado.
+- [ ] `.env` creado desde `.env.example`, con permisos `600`, `BFF_PUBLIC_HOST=0.0.0.0` y `FRONTEND_DOMAIN` sin barra final.
+- [ ] Security Group con solo `22`, `80`, `443` y `8080` de entrada.
+- [ ] Stack levantado, incluidos Caddy y el frontend, y servicios saludables.
+- [ ] Frontend compilado con `ANDESSTAY_API_URL` y `ANDESSTAY_REDIRECT_URI` como build args; contenedor sin puertos publicados.
+- [ ] `curl -I https://${FRONTEND_DOMAIN}` devuelve `200` con certificado válido.
 - [ ] Clúster RabbitMQ con dos nodos y colas declaradas, incluida `q.cmd.cabin.ready`.
 - [ ] Imagen `andesstay/ms-notify:latest` reconstruida desde `main` de notify (`9f2b270` o posterior, PR #23) con `spring-kafka`.
 - [ ] `NOTIFY_KAFKA_AUTO_STARTUP` revisado (`false` por defecto; `true` solo si se prueba `reservations.activity`).
 - [ ] `ms-rabbit-admin` saludable vía `docker exec` y sin puerto publicado.
-- [ ] Gateway actualizado con la IP pública y el origen del frontend.
-- [ ] Redirect URI y Logout URI de Entra ID actualizadas.
+- [ ] API Gateway `lmv59t05gg` reutilizado, con CORS `https://${FRONTEND_DOMAIN}` e integración a la Elastic IP.
+- [ ] BFF revisado para permitir el origen HTTPS si aplica CORS allí (responsable de otro repo).
+- [ ] Redirect URI y Logout URI de Entra ID registradas como `https://${FRONTEND_DOMAIN}`.
 - [ ] Pruebas por Gateway con los códigos esperados.
 - [ ] Capturas `10` a `12` y `20` a `24` obtenidas y sanitizadas.
 - [ ] Ningún comando de AWS ejecutado desde el agente.
