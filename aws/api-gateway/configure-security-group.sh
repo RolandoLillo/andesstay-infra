@@ -18,5 +18,10 @@ aws ec2 authorize-security-group-ingress \
 
 aws ec2 authorize-security-group-ingress \
   --group-id "$SG_ID" \
+  --protocol tcp --port 443 --cidr 0.0.0.0/0 \
+  --region "$AWS_REGION"
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
   --protocol tcp --port 8080 --cidr 0.0.0.0/0 \
   --region "$AWS_REGION"

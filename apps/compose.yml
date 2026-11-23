@@ -303,11 +303,14 @@ services:
     build:
       context: ../../andesstay-frontend
       dockerfile: Dockerfile
+      args:
+        ANDESSTAY_API_URL: "${ANDESSTAY_API_URL:-https://lmv59t05gg.execute-api.us-east-1.amazonaws.com/prod/api}"
+        ANDESSTAY_REDIRECT_URI: "https://${FRONTEND_DOMAIN:?Definir FRONTEND_DOMAIN}"
     image: andesstay/frontend:latest
     container_name: andesstay-frontend
     restart: unless-stopped
-    ports:
-      - "${FRONTEND_PUBLIC_HOST:-0.0.0.0}:${FRONTEND_PORT:-80}:80"
+    expose:
+      - "80"
     depends_on:
       ms-bff:
         condition: service_healthy
@@ -317,6 +320,25 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    networks:
+      - gateway-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: andesstay-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FRONTEND_DOMAIN: "${FRONTEND_DOMAIN:?Definir FRONTEND_DOMAIN}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
     networks:
       - gateway-net
 
@@ -334,3 +356,5 @@ volumes:
   kafka_data:
   rabbitmq1_data:
   rabbitmq2_data:
+  caddy_data:
+  caddy_config:

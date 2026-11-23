@@ -14,16 +14,27 @@ Parameters:
     Description: >
       Application (client) ID registrado en la app de Entra ID.
       El audience esperado sera: ${ApiClientId}
+  ApiId:
+    Type: String
+    Default: lmv59t05gg
+    Description: ID del HTTP API existente. No se crea un API nuevo.
+  CreateNewApi:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Solo para laboratorios nuevos; por defecto se reutiliza ApiId.
   StageName:
     Type: String
     Default: prod
-    Description: Nombre del stage de despliegue
+    Description: Nombre del stage existente
   BffUrl:
     Type: String
     Default: "http://<EC2_PUBLIC_IP>:8080"
     Description: >
       URL base del Backend-for-Frontend al que el API Gateway reenvia las
-      peticiones, sin ruta ni sufijo /{proxy}. Sobrescribir con la IP publica
+      peticiones, sin ruta ni sufijo /{proxy}. Sobrescribir con la Elastic IP
       vigente al desplegar.
   AllowedOriginLocal:
     Type: String
@@ -31,10 +42,13 @@ Parameters:
     Description: Origen CORS para el frontend Angular local
   AllowedOriginPublic:
     Type: String
-    Default: "http://<FRONTEND_PUBLIC_ORIGIN>"
+    Default: "https://<FRONTEND_DOMAIN>"
     Description: >
-      Origen CORS del frontend servido por nginx en EC2. Sobrescribir via CLI
-      con la IP publica vigente o el dominio del frontend.
+      Origen CORS HTTPS del frontend servido por Caddy. Debe coincidir con
+      FRONTEND_DOMAIN, exacto y sin barra final.
+
+Conditions:
+  ShouldCreateApi: !Equals [!Ref CreateNewApi, "true"]
 
 Resources:
 
@@ -43,6 +57,9 @@ Resources:
   # =============================
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
+    Condition: ShouldCreateApi
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Name: andesstay-http-api
       Description: HTTP API publico de AndesStay - autenticacion JWT centralizada via Microsoft Entra ID
@@ -69,7 +86,7 @@ Resources:
   JwtAuthorizer:
     Type: AWS::ApiGatewayV2::Authorizer
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       AuthorizerType: JWT
       IdentitySource:
         - $request.header.Authorization
@@ -85,7 +102,7 @@ Resources:
   BffIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       IntegrationType: HTTP_PROXY
       IntegrationUri: !Ref BffUrl
       IntegrationMethod: ANY
@@ -102,7 +119,7 @@ Resources:
   HealthRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/health
       AuthorizationType: NONE
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
@@ -110,7 +127,7 @@ Resources:
   HealthRouteReservations:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/reservations/health
       AuthorizationType: NONE
       Target: !Join ["/", ["integrations", !Ref BffIntegration]]
@@ -120,7 +137,7 @@ Resources:
   GetReservationsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/reservations
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -131,7 +148,7 @@ Resources:
   PostReservationsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: POST /api/reservations
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -142,7 +159,7 @@ Resources:
   GetReservationByIdRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/reservations/{id}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -153,7 +170,7 @@ Resources:
   UpdateReservationStatusRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: PUT /api/reservations/{id}/status
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -164,7 +181,7 @@ Resources:
   UpdateReservationPreparationRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: PUT /api/reservations/{id}/preparation
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -175,7 +192,7 @@ Resources:
   MeRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/me
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -186,7 +203,7 @@ Resources:
   CatalogListRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/catalog/units
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -197,7 +214,7 @@ Resources:
   CatalogCreateRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: POST /api/catalog/units
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -208,7 +225,7 @@ Resources:
   CatalogUpdateRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: PUT /api/catalog/units/{id}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -219,7 +236,7 @@ Resources:
   CatalogHealthRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/catalog/health
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -230,7 +247,7 @@ Resources:
   CatalogProxyRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/catalog/{proxy+}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -241,7 +258,7 @@ Resources:
   AuditProxyRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       RouteKey: GET /api/audit/{proxy+}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
@@ -258,14 +275,23 @@ Resources:
   ProdStage:
     Type: AWS::ApiGatewayV2::Stage
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
       StageName: !Ref StageName
       AutoDeploy: true
 
 Outputs:
+  ApiIdUsed:
+    Description: ID del HTTP API reutilizado o creado
+    Value: !If [ShouldCreateApi, !Ref HttpApi, !Ref ApiId]
   HttpApiEndpoint:
-    Description: URL base del HTTP API
-    Value: !GetAtt HttpApi.ApiEndpoint
+    Description: URL base del HTTP API usada por el frontend (incluye /api)
+    Value: !If
+      - ShouldCreateApi
+      - !Sub "${HttpApi.ApiEndpoint}/${StageName}/api"
+      - !Sub "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/api"
+  CorsAllowedOrigin:
+    Description: Origen HTTPS permitido por CORS
+    Value: !Ref AllowedOriginPublic
   JwtAuthorizerId:
     Description: ID del JWT Authorizer (necesario para agregar rutas futuras)
     Value: !Ref JwtAuthorizer

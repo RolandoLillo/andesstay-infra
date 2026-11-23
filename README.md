@@ -108,9 +108,10 @@ El archivo `apps/compose.yml` orquesta los componentes, aislando la persistencia
 | `rabbitmq-1`     | `5672`, `15672` | `backend-net` + `gateway-net`    | Nodo **seed** del clúster RabbitMQ (`rabbit@rabbitmq-1`); expone AMQP `5672` + management UI `15672` |
 | `rabbitmq-2`     | interno     | `backend-net`                        | Segundo nodo del clúster (`rabbit@rabbitmq-2`); se une a `rabbit@rabbitmq-1` al arrancar |
 | `ms-bff`         | `8080`      | `backend-net` + `gateway-net`        | Único punto de entrada para el Gateway    |
-| ~~`frontend`~~   | `4200`      | `gateway-net`                        | **Comentado** — se ejecuta con `ng serve`  |
+| `frontend`       | interno     | `gateway-net`                        | SPA Angular servida por nginx con build args `ANDESSTAY_*`; sin puerto publicado |
+| `caddy`          | `80`, `443` | `gateway-net`                        | HTTPS con Let's Encrypt para `${FRONTEND_DOMAIN}`; proxy a `frontend:80` |
 
-> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq-1`, `rabbitmq-2`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`, `ms-rabbit-admin`) viven en `backend-net` (red interna). `ms-bff` y `rabbitmq-1` participan además en `gateway-net` y exponen puertos al host.
+> Los servicios de datos/mensajería (`postgres-db`, `zookeeper`, `kafka`, `rabbitmq-1`, `rabbitmq-2`) y los microservicios (`ms-reservations`, `ms-catalog`, `ms-audit`, `ms-notify`, `ms-rabbit-admin`) viven en `backend-net` (red interna). `ms-bff`, `rabbitmq-1`, `frontend` y `caddy` participan en `gateway-net`; solo `ms-bff` (`8080`) y `caddy` (`80`/`443`) exponen puertos al host, y RabbitMQ queda limitado a `127.0.0.1`.
 
 ### Topología de Red y Acceso a Kafka
 
