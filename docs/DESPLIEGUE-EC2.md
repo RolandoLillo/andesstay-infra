@@ -2,7 +2,7 @@
 
 Checklist operativo para desplegar AndesStay en una instancia **Amazon Linux 2023** con Docker, Docker Compose y swap.
 
-> **Alcance:** este documento es para ejecución manual del operador. No se ejecutó ningún comando en AWS para prepararlo.
+> **Alcance:** este documento es para ejecución manual del operador. Incluye el frontend nginx en el puerto `80` y el BFF en `8080`. No se ejecutó ningún comando en AWS para prepararlo.
 >
 > **Regla de seguridad:** no guardar tokens, contraseñas ni el archivo `.env` en el repositorio. No mostrar tokens en capturas de pantalla.
 
@@ -20,7 +20,7 @@ Checklist operativo para desplegar AndesStay en una instancia **Amazon Linux 202
 
 ### Advertencia sobre `t3.micro`
 
-`t3.micro` tiene **1 vCPU y 1 GB de RAM**. Este stack levanta PostgreSQL, Zookeeper, Kafka, dos nodos RabbitMQ, cinco microservicios Spring Boot y el BFF. El build de Docker y los JVM pueden agotar la memoria y provocar que Docker termine procesos por OOM.
+`t3.micro` tiene **1 vCPU y 1 GB de RAM**. Este stack levanta PostgreSQL, Zookeeper, Kafka, dos nodos RabbitMQ, cinco microservicios Spring Boot, el BFF y el frontend nginx. El build de Docker y los JVM pueden agotar la memoria y provocar que Docker termine procesos por OOM.
 
 Recomendación:
 
@@ -29,9 +29,9 @@ Recomendación:
 - Si el laboratorio obliga a usar `t3.micro`:
   - Agregar 2 GB de swap (incluido abajo).
   - Compilar con `COMPOSE_PARALLEL_LIMIT=1`, o construir un servicio a la vez.
-  - No ejecutar el frontend en la misma instancia.
+  - Construir la imagen del frontend fuera de la instancia o hacerlo por separado.
   - Monitorear con `free -h` y `docker stats`.
-  - Si aun así falla por OOM, construir las imágenes en otra máquina y publicarlas en un registry, o usar temporalmente una instancia más grande.
+  - Si aun así falla por OOM, usar `t3.medium` o publicar las imágenes desde otra máquina.
 
 El swap evita algunos OOM, pero no reemplaza la RAM: Kafka y RabbitMQ pueden volverse lentos.
 
@@ -44,11 +44,12 @@ Configurar el Security Group de la instancia con **solo** estas reglas de entrad
 | Tipo | Protocolo | Puerto | Origen | Uso |
 |---|---|---|---|---|
 | SSH | TCP | `22` | `<TU_IP_PUBLICA>/32` | Administración |
+| HTTP frontend | TCP | `80` | `0.0.0.0/0` | Angular servido por nginx |
 | HTTP API BFF | TCP | `8080` | `0.0.0.0/0` | Acceso del API Gateway al BFF |
 
 Salida: dejar la regla por defecto (todo el tráfico saliente).
 
-**No abrir** `5432`, `9092`, `5672` ni `15672` a Internet. RabbitMQ se administra por túnel SSH, no exponiendo el puerto de management.
+**No abrir** `5432`, `9092`, `5672` ni `15672` a Internet. `compose.yml` publica RabbitMQ solo en `127.0.0.1`; la UI se administra por túnel SSH.
 
 Comandos opcionales con AWS CLI:
 
@@ -64,8 +65,21 @@ aws ec2 authorize-security-group-ingress \
 
 aws ec2 authorize-security-group-ingress \
   --group-id "$SG_ID" \
+  --protocol tcp --port 80 --cidr 0.0.0.0/0 \
+  --region "$AWS_REGION"
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
   --protocol tcp --port 8080 --cidr 0.0.0.0/0 \
   --region "$AWS_REGION"
+```
+
+Equivalente semiautomático, previa confirmación del operador:
+
+```bash
+export AWS_REGION=us-east-1
+export SG_ID=sg-xxxxxxxxxxxxxxxxx
+./aws/api-gateway/configure-security-group.sh
 ```
 
 > Para producción, restringir el acceso al BFF con NLB/VPC Link o un rango controlado. En el laboratorio se usa `0.0.0.0/0` porque el API Gateway HTTP no tiene una IP fija simple.
@@ -144,15 +158,17 @@ git clone https://github.com/RolandoLillo/andesstay-ms-reservations.git
 git clone https://github.com/HeOlivares/andesstay-ms-notify.git
 git clone https://github.com/RolandoLillo/andesstay-ms-audit.git
 git clone https://github.com/HeOlivares/andesstay-ms-rabbit-admin.git
+git clone https://github.com/cristianmonsalve14/andesstay-frontend.git
 ```
 
-El frontend no es necesario para levantar el backend y no está activo en `compose.yml`. Si se va a servir, clonarlo también en `~/andesstay`.
+El frontend se sirve con el servicio `frontend` de `compose.yml` en el puerto `80`.
 
 Verificar la estructura esperada:
 
 ```bash
 ls -1 ~/andesstay
 test -f ~/andesstay/andesstay-ms-reservations/reservations/Dockerfile && echo 'Dockerfile de reservas OK'
+test -f ~/andesstay/andesstay-frontend/Dockerfile && echo 'Dockerfile del frontend OK'
 ```
 
 Actualizar los repositorios:
@@ -165,12 +181,15 @@ for repo in \
   andesstay-ms-reservations \
   andesstay-ms-notify \
   andesstay-ms-audit \
-  andesstay-ms-rabbit-admin
+  andesstay-ms-rabbit-admin \
+  andesstay-frontend
 do
   git -C "$repo" switch main
   git -C "$repo" pull --ff-only
 done
 ```
+
+`andesstay-ms-notify` debe estar en `main` con el merge `9f2b270` (PR #23), que incorpora `spring-kafka` y el listener de `reservations.activity`. La imagen `andesstay/ms-notify:latest` tiene que reconstruirse desde ese commit; no reutilizar una imagen anterior.
 
 ---
 
@@ -192,6 +211,10 @@ RABBITMQ_ERLANG_COOKIE=<COOKIE_FUERTE_Y_UNICA>
 
 BFF_PUBLIC_HOST=0.0.0.0
 BFF_PORT=8080
+FRONTEND_PUBLIC_HOST=0.0.0.0
+FRONTEND_PORT=80
+FRONTEND_PUBLIC_ORIGIN=http://<IP_PUBLICA_DE_LA_INSTANCIA>
+NOTIFY_KAFKA_AUTO_STARTUP=false
 
 AWS_REGION=us-east-1
 AWS_EC2_PUBLIC_IP=<IP_PUBLICA_DE_LA_INSTANCIA>
@@ -201,6 +224,9 @@ AWS_API_ENDPOINT=https://<API_ID>.execute-api.us-east-1.amazonaws.com
 Puntos importantes:
 
 - `BFF_PUBLIC_HOST=0.0.0.0` es obligatorio en EC2. Con `127.0.0.1` el API Gateway no puede alcanzar el BFF.
+- `FRONTEND_PUBLIC_ORIGIN` debe coincidir con el origen permitido en el Gateway y con la Redirect/Logout URI de Entra ID.
+- `NOTIFY_KAFKA_AUTO_STARTUP=false` mantiene activos los consumidores Rabbit (`q.cmd.email`, `q.cmd.housekeeping`, `q.cmd.voucher` y `q.cmd.cabin.ready`) y pausa solo el listener Kafka de `reservations.activity`; cambiarlo a `true` solo cuando haya productor en `main` de reservations.
+- `environment.prod.ts` trae los valores documentados en `docs/GATEWAY.md`; si la IP cambia, actualizarlo antes de construir el frontend.
 - No reutilizar las contraseñas de ejemplo en el laboratorio.
 - Mantener el `.env` con permisos `600`.
 - No commitear el `.env` ni pegar su contenido en el chat o en capturas.
@@ -222,6 +248,15 @@ Los comandos se ejecutan desde `apps` y usan el `.env` de la raíz del repositor
 ```bash
 cd ~/andesstay/andesstay-infra/apps
 ```
+
+Reconstruir `ms-notify` desde `main` antes de arrancar el stack (imprescindible si la imagen `andesstay/ms-notify:latest` viene de un despliegue anterior):
+
+```bash
+git -C ~/andesstay/andesstay-ms-notify rev-parse --short HEAD
+docker-compose --env-file ../.env build ms-notify
+```
+
+El `HEAD` debe ser `9f2b270` o posterior: esa versión incluye `spring-kafka`, el health `http://localhost:8083/api/notify/health` y el consumidor Rabbit de `q.cmd.cabin.ready`.
 
 En una instancia con RAM suficiente:
 
@@ -252,7 +287,14 @@ docker-compose --env-file ../.env ps
 Si algún servicio queda en `unhealthy`, revisar sus logs antes de continuar:
 
 ```bash
-docker-compose --env-file ../.env logs --tail=100 ms-bff ms-reservations ms-catalog ms-audit ms-notify ms-rabbit-admin
+docker-compose --env-file ../.env logs --tail=100 ms-bff ms-reservations ms-catalog ms-audit ms-notify ms-rabbit-admin frontend
+```
+
+El servicio `frontend` compila Angular con `angular.json` → `environment.prod.ts` y sirve el resultado con nginx. Si la instancia tiene poca RAM, construirlo por separado:
+
+```bash
+docker-compose --env-file ../.env build frontend
+docker-compose --env-file ../.env up -d --remove-orphans
 ```
 
 ---
@@ -264,6 +306,7 @@ docker-compose --env-file ../.env logs --tail=100 ms-bff ms-reservations ms-cata
 ```bash
 curl -sS -o /dev/null -w 'BFF actuator: %{http_code}\n' http://127.0.0.1:8080/actuator/health
 curl -sS -o /dev/null -w 'BFF api/health: %{http_code}\n' http://127.0.0.1:8080/api/health
+curl -sS -o /dev/null -w 'Frontend health: %{http_code}\n' http://127.0.0.1/health
 
 docker exec andesstay-ms-reservations wget -qO- http://localhost:8082/api/reservations/health
 docker exec andesstay-ms-catalog wget -qO- http://localhost:8081/actuator/health
@@ -273,6 +316,10 @@ docker exec andesstay-ms-rabbit-admin wget -qO- http://localhost:8085/api/health
 ```
 
 Los health checks deben responder `200` y estado `UP`. `ms-rabbit-admin` debe responder `status: UP`. No publica el puerto `8085` porque no tiene autenticación: se prueba solo con `docker exec`, nunca desde el host ni desde el Gateway. Ver [PRUEBAS-RABBIT-ADMIN.md](https://github.com/RolandoLillo/andesstay-infra/blob/7372c2f/docs/PRUEBAS-RABBIT-ADMIN.md) (PR #16).
+
+El health de `ms-notify` es `http://localhost:8083/api/notify/health` y se verifica dentro del contenedor con el `docker exec` anterior; el puerto `8083` no se publica en EC2.
+
+Solo los puertos `80` y `8080` deben responder desde fuera de la instancia. Kafka y PostgreSQL no publican puertos; RabbitMQ publica `5672` y `15672` solo en `127.0.0.1`. Verificar con `docker-compose --env-file ../.env ps --format table`.
 
 ### Clúster RabbitMQ
 
@@ -287,7 +334,25 @@ Deben aparecer los dos nodos `rabbit@rabbitmq-1` y `rabbit@rabbitmq-2` en ejecuc
 - `q.cmd.email`
 - `q.cmd.housekeeping`
 - `q.cmd.voucher`
+- `q.cmd.cabin.ready`
 - sus respectivas `.dlq`
+
+### Consumidor de actividad de reservas (Kafka, opcional)
+
+Por defecto `NOTIFY_KAFKA_AUTO_STARTUP=false`: los consumidores Rabbit siguen activos, incluido `q.cmd.cabin.ready`, y solo queda pausado el `@KafkaListener` de `reservations.activity`. Hoy no hay productor de ese tópico en `main` de reservations (R-02/R-05 pendientes), por eso no se enciende por defecto. El grupo por defecto es `notify-activity` (`spring.kafka.consumer.group-id`), no hace falta pasarlo.
+
+Para encender el consumidor cuando el productor esté disponible:
+
+```bash
+cd ~/andesstay/andesstay-infra
+nano .env
+# NOTIFY_KAFKA_AUTO_STARTUP=true
+cd apps
+docker-compose --env-file ../.env up -d --force-recreate ms-notify
+docker-compose --env-file ../.env logs --tail=100 ms-notify
+```
+
+Para volver a pausarlo, restaurar `NOTIFY_KAFKA_AUTO_STARTUP=false` y repetir el `up -d --force-recreate ms-notify`.
 
 ### Acceso a la Management UI por túnel SSH
 
@@ -331,18 +396,15 @@ EC2_PUBLIC_IP=$(curl -s \
 echo "$EC2_PUBLIC_IP"
 ```
 
-Desplegar/actualizar el stack desde la raíz de `andesstay-infra`:
+Desplegar/actualizar el stack desde la raíz de `andesstay-infra`, previa confirmación del operador:
 
 ```bash
-aws cloudformation deploy \
-  --template-file aws/api-gateway/http-api.yml \
-  --stack-name andesstay-api-gateway \
-  --parameter-overrides \
-    BffUrl="http://${EC2_PUBLIC_IP}:8080" \
-    AllowedOriginPublic="http://${EC2_PUBLIC_IP}:4200" \
-  --capabilities CAPABILITY_IAM \
-  --region us-east-1
+export AWS_REGION=us-east-1
+export FRONTEND_PUBLIC_ORIGIN="http://${EC2_PUBLIC_IP}"
+./aws/api-gateway/deploy.sh
 ```
+
+El script usa `EC2_PUBLIC_IP`, aplica `BffUrl="http://${EC2_PUBLIC_IP}:8080"` y `AllowedOriginPublic="${FRONTEND_PUBLIC_ORIGIN}"`, y muestra el endpoint resultante.
 
 Obtener el endpoint:
 
@@ -357,6 +419,8 @@ echo "$API"
 ```
 
 > `BffUrl` debe ser solo `http://<IP>:8080`, sin `/{proxy}`. La plantilla reenvía la ruta completa mediante `overwrite:path`.
+
+Registrar `FRONTEND_PUBLIC_ORIGIN` como Redirect URI y Logout URI en la app registration de Entra ID. MSAL usa el mismo valor para ambas; debe ser idéntico al `redirectUri` de `environment.prod.ts`.
 
 ---
 
@@ -489,7 +553,9 @@ Guardar las capturas en `evidencias/` (o en el directorio indicado por el curso)
 - `12-publish-consume.png`: publicación en `cmd.direct` (`email.send`) y consumo/cola vacía con consumidor activo.
 - `20-pruebas-gateway.png`: resultados de las pruebas `200/401/403/404` por Gateway.
 - `21-gateway-config.png`: API Gateway con rutas y JWT Authorizer configurados.
-- `22-ec2-security-group.png`: instancia EC2 y Security Group con solo los puertos `22` y `8080` de entrada.
+- `22-ec2-security-group.png`: instancia EC2 y Security Group con solo los puertos `22`, `80` y `8080` de entrada.
+- `23-frontend-ec2.png`: frontend Angular cargado desde `http://<IP_PUBLICA>` y login MSAL completado.
+- `24-entra-redirect.png`: Redirect URI y Logout URI de Entra ID con el mismo origen del frontend.
 
 Antes de adjuntar:
 
@@ -506,11 +572,15 @@ Antes de adjuntar:
 - [ ] Swap creado y visible en `swapon --show`.
 - [ ] Repositorios hermanos clonados en `~/andesstay`.
 - [ ] `.env` creado desde `.env.example`, con permisos `600` y `BFF_PUBLIC_HOST=0.0.0.0`.
-- [ ] Security Group con solo `22` y `8080` de entrada.
-- [ ] Stack levantado y servicios saludables.
-- [ ] Clúster RabbitMQ con dos nodos y colas declaradas.
+- [ ] Security Group con solo `22`, `80` y `8080` de entrada.
+- [ ] Stack levantado, incluido el frontend, y servicios saludables.
+- [ ] Frontend compilado con `environment.prod.ts` y sirviendo en el puerto `80`.
+- [ ] Clúster RabbitMQ con dos nodos y colas declaradas, incluida `q.cmd.cabin.ready`.
+- [ ] Imagen `andesstay/ms-notify:latest` reconstruida desde `main` de notify (`9f2b270` o posterior, PR #23) con `spring-kafka`.
+- [ ] `NOTIFY_KAFKA_AUTO_STARTUP` revisado (`false` por defecto; `true` solo si se prueba `reservations.activity`).
 - [ ] `ms-rabbit-admin` saludable vía `docker exec` y sin puerto publicado.
-- [ ] Gateway actualizado con la IP pública actual.
+- [ ] Gateway actualizado con la IP pública y el origen del frontend.
+- [ ] Redirect URI y Logout URI de Entra ID actualizadas.
 - [ ] Pruebas por Gateway con los códigos esperados.
-- [ ] Capturas `10` a `12` y `20` a `22` obtenidas y sanitizadas.
+- [ ] Capturas `10` a `12` y `20` a `24` obtenidas y sanitizadas.
 - [ ] Ningún comando de AWS ejecutado desde el agente.
